@@ -1,0 +1,136 @@
+name: Poll approvals
+
+# Telegram inline buttons need something to read the callback. A webhook
+# would need a public HTTPS endpoint, so instead this polls getUpdates on
+# a schedule -- no server, no extra hosting.
+#
+# Five minutes is GitHub's minimum cron interval, and scheduled runs can be
+# delayed under load, so treat "a few minutes after tapping" as normal.
+on:
+  schedule:
+    # GitHub throttles high-frequency schedules hard -- */5 was
+    # running roughly twice in five hours. */15 is honoured more
+    # often, and the build workflow also polls at the end.
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      approve_slug:
+        description: "Publish this slug now (bypasses Telegram buttons)"
+        required: false
+        type: string
+      reject_slug:
+        description: "Discard this slug"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+# ONE group across both workflows. state/ is committed by
+# whichever run finishes, and two runs pushing it at once is
+# what lost a published status this morning. Serialising them
+# removes the race rather than retrying through it.
+concurrency:
+  group: reel-state
+  cancel-in-progress: false
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Python deps
+        run: pip install requests
+
+      - name: Process button presses
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          AUTO_PUBLISH: ${{ vars.AUTO_PUBLISH || '1' }}
+          AUTO_PUBLISH_MINUTES: ${{ vars.AUTO_PUBLISH_MINUTES || '10' }}
+          COVER_ENABLED: ${{ vars.COVER_ENABLED || '1' }}
+          COVER_THUMB_MS: ${{ vars.COVER_THUMB_MS || '900' }}
+        run: |
+          # Correct any manifest whose reel is already live BEFORE acting on
+          # it, so an approve or an auto-publish cannot post a duplicate.
+          # reconcile never publishes, so it is not gated on AUTO_PUBLISH --
+          # gating it was why a disabled pipeline could not tell the truth
+          # about its own state.
+          python -u run.py reconcile || true
+          if [ -n "${{ inputs.approve_slug }}" ]; then
+            python -u run.py approve "${{ inputs.approve_slug }}"
+          elif [ -n "${{ inputs.reject_slug }}" ]; then
+            python -u run.py reject "${{ inputs.reject_slug }}"
+          else
+            python -u run.py poll || true
+            python -u run.py autopublish
+          fi
+
+      - name: Commit state
+        if: always()
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          git config user.name  "reel-bot"
+          git config user.email "reel-bot@users.noreply.github.com"
+          BR="${GITHUB_REF_NAME:-main}"
+          git add state/
+          # Decide "nothing to do" ONCE, before committing. The old loop
+          # re-tested `git diff --staged --quiet` after a rebase, when the
+          # work was already committed rather than staged -- so it printed
+          # "no state changes" and exited 0 with the commit unpushed. That
+          # is how a published reel kept reading as pending.
+          if git diff --staged --quiet && \
+             [ "$(git rev-list --count "origin/$BR"..HEAD 2>/dev/null || echo 0)" = "0" ]; then
+            echo "no state changes"; exit 0
+          fi
+          git diff --staged --quiet || git commit -q -m "state $(date -u +%FT%TZ)"
+          for attempt in 1 2 3; do
+            if git push; then echo "state pushed"; exit 0; fi
+            echo "push rejected, reconciling (attempt $attempt)"
+            git fetch -q origin "$BR"
+            if ! git rebase -X theirs "origin/$BR"; then
+              git rebase --abort || true
+              # Keep this run's state files, re-commit them on top of theirs.
+              git reset --soft "origin/$BR"
+              git add state/
+              git diff --staged --quiet || git commit -q -m "state $(date -u +%FT%TZ)"
+            fi
+          done
+          # A lost state push is how a published reel kept reading
+          # "pending". reconcile repairs it on the next run, but say so now.
+          echo "::warning::could not push state after 3 attempts"
+          python -u run.py alert "State could not be pushed after 3 attempts. Published reels may still read as pending until the next run reconciles them. Log: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" || true
+
+      # Last step on purpose: state is committed above even on failure, so
+      # by the time this runs the repo already holds whatever was learned.
+      # One honest message beats a green tick on a run that did nothing.
+      - name: Tell me this run failed
+        if: failure()
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python -u run.py alert "${{ github.workflow }} failed. Run: python run.py doctor -- or open ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      - name: Tell me this run was cancelled
+        if: cancelled()
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python -u run.py alert "${{ github.workflow }} was CANCELLED (usually the job timeout). Nothing was posted. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" || true

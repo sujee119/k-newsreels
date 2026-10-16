@@ -1,0 +1,91 @@
+name: Refresh Instagram token
+
+# Long-lived Instagram tokens last ~60 days, and each exchange returns a
+# fresh 60 days, so running monthly renews indefinitely -- there is no
+# expiry date to diarise. Without it the pipeline keeps building reels and
+# silently fails to post them.
+#
+# Needs a PAT with secrets:write stored as ADMIN_PAT; the default
+# GITHUB_TOKEN cannot update repository secrets.
+on:
+  schedule:
+    - cron: "13 3 1 * *"       # 1st of the month
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install requests
+
+      # One step on purpose. A token passed between steps has to go through
+      # `steps.x.outputs`, and GitHub interpolates that into the script text
+      # it prints to the log -- which is public on a public repo, and step
+      # outputs are not masked the way secrets.* are. Keeping it in a shell
+      # variable inside one step means it is never interpolated, and
+      # add-mask covers it against any accidental echo.
+      - name: Refresh the token and store it
+        env:
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          FB_APP_ID: ${{ secrets.FB_APP_ID }}
+          FB_APP_SECRET: ${{ secrets.FB_APP_SECRET }}
+          GH_TOKEN: ${{ secrets.ADMIN_PAT }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TOKEN="$(python - <<'PY'
+          import os, sys, requests
+          r = requests.get(
+              "https://graph.facebook.com/v21.0/oauth/access_token",
+              params={
+                  "grant_type": "fb_exchange_token",
+                  "client_id": os.environ["FB_APP_ID"],
+                  "client_secret": os.environ["FB_APP_SECRET"],
+                  "fb_exchange_token": os.environ["IG_ACCESS_TOKEN"],
+              }, timeout=60)
+          if r.status_code != 200:
+              sys.exit(f"exchange failed: HTTP {r.status_code} {r.text[:300]}")
+          tok = r.json().get("access_token", "")
+          if len(tok) < 50:
+              sys.exit("exchange returned no usable token")
+          print(tok)
+          PY
+          )"
+          echo "::add-mask::$TOKEN"
+
+          # Prove the new token works BEFORE overwriting the stored one. A
+          # bad token written into the secret would break every later run.
+          if ! curl -sf -o /dev/null \
+               "https://graph.facebook.com/v21.0/me?access_token=$TOKEN"; then
+            echo "the new token was rejected by the Graph API; keeping the old one"
+            exit 1
+          fi
+
+          printf '%s' "$TOKEN" | gh secret set IG_ACCESS_TOKEN --repo "$REPO"
+          echo "stored a fresh token"
+
+      - name: Tell me it worked
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python -u run.py alert "Instagram token refreshed for another 60 days." || true
+
+      # The one failure that stops all posting must not be silent. ADMIN_PAT
+      # expiring is the likeliest cause, and it gives no other warning.
+      - name: Tell me it failed
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python -u run.py alert "TOKEN REFRESH FAILED -- posting will stop within 60 days. Check whether ADMIN_PAT has expired: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" || true
