@@ -6,14 +6,14 @@ name: Build reel
 on:
   schedule:
     # Times are UTC; Asia/Seoul is +9. Three builds a day by default.
-    - cron: "12 23 * * *"      # 07:47 Seoul
-    - cron: "12  5 * * *"      # 13:47 Seoul
-    - cron: "12 11 * * *"      # 19:47 Seoul
+    - cron: "12 23 * * *"      # 08:12 Seoul
+    - cron: "12  5 * * *"      # 14:12 Seoul
+    - cron: "12 11 * * *"      # 20:12 Seoul
     # GitHub drops scheduled runs under load -- the 07:47 slot was skipped
     # outright on 12 Oct. These two catch-up slots build ONLY if no reel
     # has been built for a while, so they cost nothing on a normal day.
-    - cron: "42  1 * * *"      # 10:17 Seoul, catch-up
-    - cron: "42 13 * * *"      # 22:17 Seoul, catch-up
+    - cron: "42  1 * * *"      # 10:42 Seoul, catch-up
+    - cron: "42 13 * * *"      # 22:42 Seoul, catch-up
   workflow_dispatch:
     inputs:
       story_url:
