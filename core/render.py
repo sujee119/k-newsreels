@@ -331,6 +331,13 @@ def cover_filters(text: str, start_label: str, out_label: str) -> list[str]:
              f"max(0,1-(t-{fade_from:.2f})/{config.COVER_FADE:.2f}))")
 
     step = int(size * 1.26)
+    # Centre the whole block rather than each line, so two lines and three
+    # lines both sit around the same optical middle.
+    if str(getattr(config, "COVER_ALIGN", "top")).lower() in (
+            "middle", "center", "centre"):
+        y0 = max(140, (config.HEIGHT - len(lines) * step) // 2)
+    else:
+        y0 = config.COVER_TOP
     chain, last = [], start_label
     for i, line in enumerate(lines):
         tag = f"cov{i}"
@@ -343,7 +350,7 @@ def cover_filters(text: str, start_label: str, out_label: str) -> list[str]:
             f":box=1:boxcolor=black@0.42:boxborderw=18"
             f":alpha='{alpha}'"
             f":enable='lt(t,{hold:.2f})'"
-            f":x=(w-text_w)/2:y={config.COVER_TOP + i * step}[{nxt}]")
+            f":x=(w-text_w)/2:y={y0 + i * step}[{nxt}]")
         last = nxt
     return chain
 

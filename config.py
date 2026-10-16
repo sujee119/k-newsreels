@@ -134,7 +134,10 @@ COVER_FADE = 0.45
 # Largest size is tried first; the first that fits three lines wins.
 COVER_SIZES = (118, 104, 92, 80, 70)
 COVER_MAX_LINES = 3
-COVER_TOP = int(os.getenv("COVER_TOP", "330"))     # px from the top
+# "middle" centres the block vertically whatever the line count, which
+# is where the eye lands first. "top" uses COVER_TOP as a fixed offset.
+COVER_ALIGN = os.getenv("COVER_ALIGN", "middle")
+COVER_TOP = int(os.getenv("COVER_TOP", "330"))     # px from the top, align=top only
 COVER_MAX_CHARS = 34                                # hard cap on the phrase
 
 # Which millisecond Instagram should use as the Reels-tab thumbnail. Inside

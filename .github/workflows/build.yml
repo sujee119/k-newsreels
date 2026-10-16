@@ -106,6 +106,10 @@ jobs:
           COVER_SECONDS: ${{ vars.COVER_SECONDS || '3.2' }}
           COVER_TOP: ${{ vars.COVER_TOP || '330' }}
           COVER_THUMB_MS: ${{ vars.COVER_THUMB_MS || '900' }}
+          COVER_ALIGN: ${{ vars.COVER_ALIGN || 'middle' }}
+          # Per-account sign-off, so each repo can speak for itself.
+          CTA_TEXT: ${{ vars.CTA_TEXT || 'Follow for more science, every day.' }}
+          CTA_CARD: ${{ vars.CTA_CARD || 'FOLLOW\nfor more science' }}
           VIDEO_PRESET: medium
         run: |
           # -u matters: without it Python block-buffers stdout on a runner
@@ -155,11 +159,7 @@ jobs:
       # An explicit `if:` replaces the implicit success() check, so this has
       # to say so -- otherwise a failed build still sleeps ten minutes.
       - name: Review window
-        # The default matters: an UNSET vars.AUTO_PUBLISH is an empty
-        # string, and GitHub coerces that to 0 when comparing, so
-        # `vars.AUTO_PUBLISH != '0'` was false and the window was
-        # skipped entirely on a repo that had never set the variable.
-        if: ${{ success() && steps.gate.outputs.go == 'yes' && (vars.AUTO_PUBLISH || '1') != '0' }}
+        if: success() && steps.gate.outputs.go == 'yes' && vars.AUTO_PUBLISH != '0'
         run: |
           MINS="${{ vars.AUTO_PUBLISH_MINUTES || '10' }}"
           echo "waiting ${MINS} min for a Reject tap..."
