@@ -10,8 +10,8 @@ name: Watchdog
 # without you doing anything.
 on:
   schedule:
-    - cron: "23 0 * * *"       # 09:23 Seoul
-    - cron: "23 12 * * *"      # 21:23 Seoul
+    - cron: "53 0 * * *"       # 09:23 Seoul
+    - cron: "53 12 * * *"      # 21:23 Seoul
   workflow_dispatch:
 
 permissions:
