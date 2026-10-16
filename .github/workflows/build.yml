@@ -6,14 +6,14 @@ name: Build reel
 on:
   schedule:
     # Times are UTC; Asia/Seoul is +9. Three builds a day by default.
-    - cron: "12 23 * * *"      # 08:12 Seoul
-    - cron: "12  5 * * *"      # 14:12 Seoul
-    - cron: "12 11 * * *"      # 20:12 Seoul
+    - cron: "47 22 * * *"      # 07:47 Seoul
+    - cron: "47  4 * * *"      # 13:47 Seoul
+    - cron: "47 10 * * *"      # 19:47 Seoul
     # GitHub drops scheduled runs under load -- the 07:47 slot was skipped
     # outright on 12 Oct. These two catch-up slots build ONLY if no reel
     # has been built for a while, so they cost nothing on a normal day.
-    - cron: "42  1 * * *"      # 10:42 Seoul, catch-up
-    - cron: "42 13 * * *"      # 22:42 Seoul, catch-up
+    - cron: "17  1 * * *"      # 10:17 Seoul, catch-up
+    - cron: "17 13 * * *"      # 22:17 Seoul, catch-up
   workflow_dispatch:
     inputs:
       story_url:
@@ -73,7 +73,7 @@ jobs:
         run: |
           SCHED="${{ github.event.schedule }}"
           case "$SCHED" in
-            "42  1 * * *"|"42 1 * * *"|"42 13 * * *")
+            "17  1 * * *"|"17 1 * * *"|"17 13 * * *")
               AGE=$(python -u run.py hours-since-build)
               echo "last reel was ${AGE}h ago"
               if python -c "import sys; sys.exit(0 if float('$AGE') >= 7 else 1)"; then
@@ -155,7 +155,11 @@ jobs:
       # An explicit `if:` replaces the implicit success() check, so this has
       # to say so -- otherwise a failed build still sleeps ten minutes.
       - name: Review window
-        if: success() && steps.gate.outputs.go == 'yes' && vars.AUTO_PUBLISH != '0'
+        # The default matters: an UNSET vars.AUTO_PUBLISH is an empty
+        # string, and GitHub coerces that to 0 when comparing, so
+        # `vars.AUTO_PUBLISH != '0'` was false and the window was
+        # skipped entirely on a repo that had never set the variable.
+        if: ${{ success() && steps.gate.outputs.go == 'yes' && (vars.AUTO_PUBLISH || '1') != '0' }}
         run: |
           MINS="${{ vars.AUTO_PUBLISH_MINUTES || '10' }}"
           echo "waiting ${MINS} min for a Reject tap..."
