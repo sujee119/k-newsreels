@@ -92,6 +92,9 @@ jobs:
         env:
           SCRIPT_PROVIDER: ${{ vars.SCRIPT_PROVIDER || 'gemini' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # Without this the runner used the stale default and burned a
+          # call on a 404 before auto-discovery found a working model.
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-flash-latest' }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
@@ -106,10 +109,6 @@ jobs:
           COVER_SECONDS: ${{ vars.COVER_SECONDS || '3.2' }}
           COVER_TOP: ${{ vars.COVER_TOP || '330' }}
           COVER_THUMB_MS: ${{ vars.COVER_THUMB_MS || '900' }}
-          COVER_ALIGN: ${{ vars.COVER_ALIGN || 'middle' }}
-          # Per-account sign-off, so each repo can speak for itself.
-          CTA_TEXT: ${{ vars.CTA_TEXT || 'Follow for more science, every day.' }}
-          CTA_CARD: ${{ vars.CTA_CARD || 'FOLLOW\nfor more science' }}
           VIDEO_PRESET: medium
         run: |
           # -u matters: without it Python block-buffers stdout on a runner

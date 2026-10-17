@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -893,6 +894,13 @@ def generate(title: str, summary: str, article: str = "",
                 json.JSONDecodeError, KeyError) as exc:
             last_err = exc
             print(f"  ! attempt {attempt} failed: {exc}")
+            # A 503 means "busy, come back shortly". Retrying four times
+            # inside 1.4 seconds -- which is what this did -- is the same
+            # as not retrying, and it threw away a whole build.
+            if attempt < attempts:
+                delay = min(45, 4 * (2 ** (attempt - 1)))
+                print(f"    waiting {delay}s before retrying")
+                time.sleep(delay)
 
     # Nothing was perfect. A near-miss draft beats the plain template, so
     # take the best one and say plainly what is still wrong with it.
