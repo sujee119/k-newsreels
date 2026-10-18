@@ -21,6 +21,7 @@ Topic tiers control what may be posted unattended:
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import re
@@ -382,6 +383,62 @@ _BLOCK_RE = re.compile(
     re.S | re.I)
 
 
+_GN_ID = re.compile(r"/(?:rss/)?articles/([A-Za-z0-9_\-]{16,})")
+_URL_IN_BLOB = re.compile(rb"https?://[\x20-\x7e]{8,}?(?=[\x00-\x1f\xd2]|$)")
+
+# Patterns for the interstitial page, tried only when decoding fails.
+_GN_HTML_PATTERNS = (
+    rb'data-n-au="(https?://[^"]+)"',
+    rb'<a[^>]+href="(https?://(?!news\.google|accounts\.google|policies\.google|support\.google)[^"]+)"',
+    rb'<meta[^>]+http-equiv="refresh"[^>]+url=(https?://[^"\'>]+)',
+    rb'"(https?://(?!news\.google|www\.google|accounts\.google)[^"]{20,})"',
+)
+
+
+def decode_google_news(url: str) -> str:
+    """Recover the publisher URL from a Google News link without fetching.
+
+    The article id is base64 of a small protobuf that contains the real URL
+    as plain text in the long-standing format. Reading it directly is both
+    faster and immune to Google changing the interstitial markup -- which
+    it did, costing 11 of 20 candidates in one run.
+    """
+    m = _GN_ID.search(url)
+    if not m:
+        return ""
+    token = m.group(1)
+    try:
+        raw = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
+    except Exception:
+        return ""
+    for hit in _URL_IN_BLOB.findall(raw):
+        found = hit.decode("utf-8", "ignore").strip()
+        # Trailing protobuf bytes can leave junk on the end.
+        found = re.sub(r"[^A-Za-z0-9/_\-.~:?#\[\]@!$&'()*+,;=%]+$", "", found)
+        if found.startswith("http") and "google." not in found.split("/")[2]:
+            return found
+    return ""
+
+
+def resolve_google_news(url: str) -> str:
+    """Publisher URL behind a Google News link, decoded or scraped."""
+    direct = decode_google_news(url)
+    if direct:
+        return direct
+    # Newer opaque ids carry no URL; fall back to the interstitial.
+    try:
+        html = _fetch(url, timeout=20, attempts=2)
+    except Exception:
+        return ""
+    for pat in _GN_HTML_PATTERNS:
+        m = re.search(pat, html, re.S | re.I)
+        if m:
+            cand = m.group(1).decode("utf-8", "ignore")
+            if "google." not in cand.split("/")[2]:
+                return cand
+    return ""
+
+
 def fetch_article(url: str, max_chars: int = 12000) -> str:
     """Best-effort full text from an arbitrary news page.
 
@@ -391,26 +448,21 @@ def fetch_article(url: str, max_chars: int = 12000) -> str:
     """
     global _LAST_FETCH_NOTE
     _LAST_FETCH_NOTE = ""
+
+    # Resolve Google News BEFORE fetching anything: the id usually carries
+    # the publisher URL, so the interstitial never has to be downloaded.
+    if "news.google." in url:
+        target = resolve_google_news(url)
+        if not target:
+            _LAST_FETCH_NOTE = "google-news link unresolvable"
+            return ""
+        url = target
+
     try:
         html = _fetch(url).decode("utf-8", "ignore")
     except Exception as exc:
         _LAST_FETCH_NOTE = getattr(exc, "reason", None) or type(exc).__name__
         return ""
-
-    # Google News links redirect; follow via the embedded publisher URL.
-    if "news.google.com" in url:
-        m = re.search(r'<a[^>]+href="(https?://(?!news\.google)[^"]+)"', html)
-        if not m:
-            # Google changed its interstitial markup before and will again.
-            # Say so plainly rather than returning an empty string that
-            # looks identical to a paywall.
-            _LAST_FETCH_NOTE = "google-news link unresolvable"
-            return ""
-        try:
-            html = _fetch(m.group(1)).decode("utf-8", "ignore")
-        except Exception as exc:
-            _LAST_FETCH_NOTE = getattr(exc, "reason", None) or type(exc).__name__
-            return ""
 
     html = _BLOCK_RE.sub(" ", html)
 
