@@ -186,6 +186,22 @@ jobs:
           python -u run.py poll || true
           python -u run.py autopublish
 
+      # After Instagram, never before. Returns 0 even on failure so a
+      # YouTube problem cannot turn a successful post into a red run.
+      - name: Upload to YouTube
+        if: ${{ !cancelled() && steps.gate.outputs.go == 'yes' }}
+        continue-on-error: true
+        env:
+          YT_ENABLED: ${{ vars.YT_ENABLED || '0' }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          YT_PRIVACY: ${{ vars.YT_PRIVACY || 'public' }}
+          YT_CATEGORY_ID: ${{ vars.YT_CATEGORY_ID || '28' }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python -u run.py youtube
+
       - name: Commit state
         if: always()
         continue-on-error: true

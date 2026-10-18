@@ -186,6 +186,22 @@ R2_PUBLIC_BASE = os.getenv("R2_PUBLIC_BASE", "")  # e.g. https://pub-xxxx.r2.dev
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
+# ---------------------------------------------------------------- youtube
+
+# Uploading the same reel to YouTube as a Short. Runs after the Instagram
+# publish and never blocks it: a YouTube outage must not cost a post.
+YT_ENABLED = os.getenv("YT_ENABLED", "0") not in ("0", "false", "False")
+YT_CLIENT_ID = os.getenv("YT_CLIENT_ID", "")
+YT_CLIENT_SECRET = os.getenv("YT_CLIENT_SECRET", "")
+YT_REFRESH_TOKEN = os.getenv("YT_REFRESH_TOKEN", "")
+
+# "public" | "unlisted" | "private". A channel-level default in YouTube
+# Studio can still override this, so check Upload defaults there too.
+YT_PRIVACY = os.getenv("YT_PRIVACY", "public")
+
+# 28 = Science & Technology, 25 = News & Politics, 22 = People & Blogs.
+YT_CATEGORY_ID = os.getenv("YT_CATEGORY_ID", "28")
+
 # ---------------------------------------------------------------- attribution
 
 HASHTAGS = (

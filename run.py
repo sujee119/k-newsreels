@@ -513,6 +513,68 @@ def cmd_reconcile(args) -> int:
     return 1 if unknown else 0
 
 
+def cmd_youtube(args) -> int:
+    """Upload published reels to YouTube as Shorts.
+
+    Only reels that actually went out on Instagram, and only once each --
+    the youtube_id in the manifest is the guard, the same shape that
+    stopped the duplicate Instagram posts.
+    """
+    from core import youtube
+
+    if not youtube.enabled():
+        print("  youtube not configured, skipping")
+        return 0
+
+    only = getattr(args, "slug", "") or ""
+    done = failed = skipped = 0
+
+    for mf in sorted(PENDING.glob("*.json")):
+        try:
+            man = json.loads(mf.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        if only and man.get("slug") != only:
+            continue
+        if man.get("status") != "published":
+            continue
+        if man.get("youtube_id"):
+            skipped += 1
+            continue
+
+        reel = config.OUT_DIR / man["slug"] / "reel.mp4"
+        if not reel.exists():
+            # Built on another runner; the mp4 is gone with it.
+            print(f"  skip (no local file): {man['slug']}")
+            skipped += 1
+            continue
+
+        title = youtube.build_title(man.get("title", ""),
+                                    man.get("cover_text", ""))
+        desc = youtube.build_description(man.get("caption", ""),
+                                         man.get("link", ""))
+        print(f"  uploading {man['slug']}")
+        print(f"    title: {title}")
+        try:
+            vid = youtube.upload(reel, title, desc)
+        except Exception as exc:
+            print(f"  ! youtube failed for {man['slug']}: {str(exc)[:200]}")
+            man["youtube_error"] = str(exc)[:300]
+            _save(man["slug"], man)
+            failed += 1
+            continue
+
+        man["youtube_id"] = vid
+        man.pop("youtube_error", None)
+        _save(man["slug"], man)
+        print(f"    -> {youtube.watch_url(vid)}")
+        done += 1
+
+    print(f"  youtube: {done} uploaded, {skipped} skipped, {failed} failed")
+    # Never fail the run over YouTube -- Instagram has already posted.
+    return 0
+
+
 def cmd_alert(args) -> int:
     """Send a plain Telegram message. Used to report a run that built
     nothing, so a dead pipeline is noticed without reading Actions logs."""
@@ -894,6 +956,10 @@ def main() -> int:
 
     s = sub.add_parser("alert")
     s.add_argument("text"); s.set_defaults(fn=cmd_alert)
+
+    y = sub.add_parser("youtube")
+    y.add_argument("slug", nargs="?", default="")
+    y.set_defaults(fn=cmd_youtube)
 
     k = sub.add_parser("keywords")
     k.add_argument("action",
