@@ -99,7 +99,13 @@ jobs:
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
           TTS_VOICE: ${{ vars.TTS_VOICE || 'en-US-AndrewMultilingualNeural' }}
-          TTS_PROVIDERS: ${{ vars.TTS_PROVIDERS || 'edge,gtts,espeak' }}
+          TTS_PROVIDERS: ${{ vars.TTS_PROVIDERS || 'azure,edge,gtts,espeak' }}
+          # Azure Speech: the same neural voices edge-tts borrows, but on the
+          # documented endpoint, so no 403 from GitHub's runner IPs. Unset
+          # key means the engine reports itself unavailable and the chain
+          # falls through to edge exactly as before.
+          AZURE_SPEECH_KEY: ${{ secrets.AZURE_SPEECH_KEY }}
+          AZURE_SPEECH_REGION: ${{ vars.AZURE_SPEECH_REGION || 'koreacentral' }}
           # Tunable without a code change, e.g.
           #   gh variable set WORDS_PER_SECOND --body 3.4
           TTS_RATE: ${{ vars.TTS_RATE || '+40%' }}

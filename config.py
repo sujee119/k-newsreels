@@ -24,8 +24,13 @@ MAX_STORY_AGE_DAYS = 5
 
 # ---------------------------------------------------------------- script
 
-TARGET_SECONDS = 85          # desired reel length (Reels allow up to 3 min)
-MAX_SECONDS = 92             # hard ceiling; drafts longer than this retry
+# Short beats long. 49 reels averaged 88s, and completion rate is the main
+# input to how far Reels and Shorts push a video -- 88s of news narration
+# does not get finished. Everything downstream (the per-section budgets in
+# the prompt, the shot count, the word ceiling) is derived from these two
+# numbers, so this is the only place length is set.
+TARGET_SECONDS = int(os.getenv("TARGET_SECONDS", "34"))
+MAX_SECONDS = int(os.getenv("MAX_SECONDS", "40"))
 # The delivered narration pace, and what the script is sized against. The
 # two must agree: a 229-word narration ran 106s at +8% (2.15 w/s), so
 # hitting 3.3 w/s needs roughly +66%. Sizing the script faster than the
@@ -62,12 +67,27 @@ TTS_RATE = os.getenv("TTS_RATE", "+40%")
 # TTS_VOICE named a male one. 1.0 leaves audio alone; 0.88 reads as male.
 VOICE_DEEPEN = float(os.getenv("VOICE_DEEPEN", "0.88"))
 
-# Narration engines, tried in order until one produces audio. edge sounds
-# best but talks to an undocumented Microsoft endpoint that 403s datacenter
-# IPs without notice -- which killed every build on 13 Oct. gtts needs no
-# key either; espeak is offline and cannot be blocked, so it is the floor
-# that guarantees a reel still gets made.
-TTS_PROVIDERS = os.getenv("TTS_PROVIDERS", "edge,gtts,espeak")
+# Narration engines, tried in order until one produces audio.
+#
+# azure is edge's voices with a key on the front: the same neural models,
+# but the documented endpoint, which does not 403 datacenter IPs. The free
+# tier (F0) covers 0.5M characters a month and this pipeline uses roughly
+# 285k across both accounts, so it costs nothing and removes the reason
+# reels kept falling through to gTTS's single female voice.
+#
+# edge stays second: free and keyless, worth trying before degrading.
+# gtts is a female-only last resort, pitched down by VOICE_DEEPEN.
+# espeak is offline and cannot be blocked, so it is the floor that
+# guarantees a reel still gets made.
+TTS_PROVIDERS = os.getenv("TTS_PROVIDERS", "azure,edge,gtts,espeak")
+
+# Azure Speech. Create a Speech resource on the F0 (free) tier and put the
+# key in the AZURE_SPEECH_KEY secret; the region is the resource's region
+# slug, e.g. "koreacentral" or "eastus". With no key, the azure engine
+# reports itself unavailable and the chain falls through to edge exactly
+# as before -- nothing breaks by leaving these unset.
+AZURE_SPEECH_KEY = os.getenv("AZURE_SPEECH_KEY", "")
+AZURE_SPEECH_REGION = os.getenv("AZURE_SPEECH_REGION", "koreacentral")
 
 # ---------------------------------------------------------------- video
 

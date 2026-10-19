@@ -10,6 +10,7 @@ So narration now tries engines in order and uses the first that produces
 audio. Quality degrades down the chain; a worse voice beats no reel, and
 the caller is told which engine was used so it can say so.
 
+  azure   the same voices edge uses, but keyed and documented, so no 403
   edge    natural, word timings, breaks when Microsoft feels like it
   gtts    Google Translate's voice, no key, needs network, no timings
   espeak  offline, robotic, cannot fail -- the floor
@@ -108,6 +109,90 @@ def _rate_to_wpm(rate: str) -> int:
 
 # ----------------------------------------------------------------- engines
 
+def _ssml(text: str) -> bytes:
+    """SSML for one voice at the configured rate.
+
+    The text is XML-escaped: an unescaped '&' in a headline would make the
+    whole request a 400, which would look like an outage rather than a
+    quoting bug.
+    """
+    body = (text.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;"))
+    voice = config.TTS_VOICE
+    lang = "-".join(voice.split("-")[:2]) or "en-US"
+    rate = str(config.TTS_RATE or "+0%")
+    return (f"<speak version='1.0' xml:lang='{lang}'>"
+            f"<voice name='{voice}'>"
+            f"<prosody rate='{rate}'>{body}</prosody>"
+            f"</voice></speak>").encode("utf-8")
+
+
+def _azure_token() -> str:
+    """Trade the subscription key for a 10-minute token.
+
+    The synthesis endpoint also accepts the raw key, but the token path is
+    the documented one and gives a clearer 401 when the key or region is
+    wrong -- which is the failure worth diagnosing quickly.
+    """
+    import urllib.request
+
+    region = config.AZURE_SPEECH_REGION
+    url = f"https://{region}.api.cognitive.microsoft.com/sts/v1.0/issueToken"
+    req = urllib.request.Request(url, data=b"", headers={
+        "Ocp-Apim-Subscription-Key": config.AZURE_SPEECH_KEY,
+        "Content-Length": "0",
+    })
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return resp.read().decode("utf-8")
+
+
+def _engine_azure(text: str, mp3_path: Path) -> list[Word] | None:
+    """Azure Speech, the keyed version of the voices edge-tts borrows.
+
+    Same neural models, documented endpoint, no 403 from datacenter IPs.
+    Returns no word timings -- the REST endpoint does not emit boundary
+    events, so they are estimated from the audio like gTTS. The rate is
+    set in SSML, so _fit_pace has almost nothing left to correct.
+    """
+    import urllib.error
+    import urllib.request
+
+    if not config.AZURE_SPEECH_KEY:
+        raise RuntimeError("AZURE_SPEECH_KEY is not set")
+
+    region = config.AZURE_SPEECH_REGION
+    if not region:
+        raise RuntimeError("AZURE_SPEECH_REGION is not set")
+
+    try:
+        token = _azure_token()
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(
+            f"token request returned {exc.code} -- "
+            f"{'key rejected' if exc.code == 401 else 'check the region slug'} "
+            f"(region={region})") from exc
+
+    url = f"https://{region}.tts.speech.microsoft.com/cognitiveservices/v1"
+    req = urllib.request.Request(url, data=_ssml(text), headers={
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/ssml+xml",
+        "X-Microsoft-OutputFormat": "audio-24khz-48kbitrate-mono-mp3",
+        "User-Agent": "news-reels",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            audio = resp.read()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read()[:200].decode("utf-8", "ignore")
+        raise RuntimeError(f"synthesis returned {exc.code}: {detail}") from exc
+
+    mp3_path.write_bytes(audio)
+    if not _usable(mp3_path):
+        raise RuntimeError("azure returned no usable audio")
+    return None                        # timings get estimated
+
+
 async def _edge_once(text: str, mp3_path: Path, voice: str) -> list[Word]:
     import edge_tts
 
@@ -185,6 +270,7 @@ def _engine_espeak(text: str, mp3_path: Path) -> list[Word] | None:
 
 
 _ENGINES = {
+    "azure": _engine_azure,
     "edge": _engine_edge,
     "gtts": _engine_gtts,
     "espeak": _engine_espeak,

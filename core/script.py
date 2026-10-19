@@ -52,9 +52,9 @@ class Script:
         return body
 
 
-SYSTEM_PROMPT = """You write retention-optimised narration for 60-second vertical
-science videos. Your job is to make a viewer who stops scrolling stay to the
-last second -- without ever overstating what the research actually found.
+SYSTEM_PROMPT = """You write retention-optimised narration for {total_seconds}-second
+vertical science videos. Your job is to make a viewer who stops scrolling stay
+to the last second -- without ever overstating what the research actually found.
 
 You will be given the TITLE and SUMMARY of a science news story.
 
@@ -66,7 +66,7 @@ substance is the point, not decoration around a hook.
 
 == THE STRUCTURE (follow this shape) ==
 
-HOOK (0-5s, 12-25 words) -- THE MOST IMPORTANT LINE YOU WRITE
+HOOK (0-{t_hook}s, {hook_min}-{hook_max} words) -- THE MOST IMPORTANT LINE YOU WRITE
 
   Most viewers leave in the first two seconds. The hook is the whole job.
 
@@ -185,22 +185,26 @@ BUTTON (82-85s)
    it out and spend the words on what the source does say.
 
 8. LENGTH: target {target_words} words. Hard ceiling {max_words}. This is a
-   long format -- fill it with explanation, never with repetition or padding.
-   If you find yourself restating a point, you needed more groundwork instead.
+   TIGHT format. Every sentence must carry information the one before it did
+   not. There is no room for scene-setting, restatement or a warm-up line --
+   the first sentence is already the hook. If a sentence does not teach
+   something or move the story, cut it rather than shorten it. Pick the one
+   most interesting thing the study found and spend the words there; a
+   shallow tour of four findings is worse than one explained properly.
 
 9. No call to action. No "follow for more". End on meaning.
 
 == THE SHOT LIST ==
 
-You also decide what the viewer SEES. Supply 14-18 shots covering the whole
-script. More distinct shots means more distinct imagery -- too few and the
-same picture has to be held for many seconds. Each shot is a stock-image search query plus the exact narration
+You also decide what the viewer SEES. Supply {shots_min}-{shots_max} shots covering the
+whole script. More distinct shots means more distinct imagery -- too few and
+the same picture has to be held for many seconds. Each shot is a stock-image search query plus the exact narration
 phrase it should appear on.
 
 - "cue" MUST be 3-5 words copied VERBATIM from your own narration, exactly
   as written, including the same punctuation-free spelling. It marks where
   that image cuts in. Cues must run in narration order and be spread evenly
-  across the whole script -- do not cluster them all in the first 20s.
+  across the whole script -- do not cluster them all in the first {cluster_seconds}s.
 - "query" is 2-4 plain words aimed at a stock photo library. Think about
   what photograph actually exists. "pond water sample" exists.
   "a gene being misread" does not.
@@ -216,11 +220,11 @@ Return ONLY valid JSON, no markdown fence:
 {{
   "hook_options": ["three different hooks, using three different patterns"],
   "hook":       "the strongest of your three, copied exactly",
-  "groundwork": "5-25s, the background idea the viewer needs first",
-  "method":     "25-45s, what the researchers actually did",
-  "findings":   "45-68s, what they found, closing the hook's loop",
-  "sowhat":     "68-82s, what it changes and what it doesn't",
-  "button":     "82-85s, one closing line",
+  "groundwork": "{t_hook}-{t_ground}s, the one piece of background the viewer needs, no more",
+  "method":     "{t_ground}-{t_method}s, what the researchers actually did",
+  "findings":   "{t_method}-{t_find}s, what they found, closing the hook's loop",
+  "sowhat":     "{t_find}-{t_sowhat}s, what it changes and what it doesn't",
+  "button":     "{t_sowhat}-{total_seconds}s, one closing line",
   "loop_open":  "in a few words, what question the hook plants",
   "loop_close": "in a few words, where that question gets answered",
   "cover_text": "2-5 WORDS, ALL CAPS, the scroll-stopper (see COVER TEXT below)",
@@ -229,7 +233,7 @@ Return ONLY valid JSON, no markdown fence:
   "shots": [
     {{"cue": "3-5 words verbatim from your narration",
       "query": "stock photo search term"}}
-    // 14-18 of these, in narration order, each query different
+    // {shots_min}-{shots_max} of these, in narration order, each query different
   ]
 }}"""
 
@@ -758,13 +762,36 @@ def generate(title: str, summary: str, article: str = "",
     max_words = int(config.MAX_SECONDS * config.WORDS_PER_SECOND)
     provider = config.SCRIPT_PROVIDER
 
+    # Everything the prompt says about pacing is derived from TARGET_SECONDS
+    # rather than written into the text, so changing the reel length is one
+    # number in config and the section budgets, shot count and hook size all
+    # move with it. The fractions reproduce the 85s shape the prompt was
+    # tuned at, so shortening rescales the structure instead of breaking it.
+    total = max(12, int(config.TARGET_SECONDS))
+    at = lambda frac: max(1, round(total * frac))        # noqa: E731
+    t_hook, t_ground = at(0.14), at(0.30)
+    t_method, t_find, t_sowhat = at(0.53), at(0.80), at(0.96)
+    hook_max = max(6, round(t_hook * config.WORDS_PER_SECOND))
+    hook_min = max(4, round(hook_max * 0.6))
+    # One shot every 2.8-3.8s: dense enough that no still is held past
+    # MAX_SHOT_SECONDS, which is what made the old 85s reels repeat images.
+    shots_min = max(5, round(total / 3.8))
+    shots_max = max(shots_min + 2, round(total / 2.8))
+    shots_floor = max(3, shots_min - 2)
+    cluster_seconds = at(0.24)
+
     if provider == "none" or provider not in PROVIDERS:
         print("  i no LLM provider configured -- using fallback script")
         return _fallback(title, summary)
 
     fn = PROVIDERS[provider]
-    system = SYSTEM_PROMPT.format(target_words=target_words,
-                                  max_words=max_words) + COVER_GUIDANCE
+    system = SYSTEM_PROMPT.format(
+        target_words=target_words, max_words=max_words,
+        total_seconds=total, t_hook=t_hook, t_ground=t_ground,
+        t_method=t_method, t_find=t_find, t_sowhat=t_sowhat,
+        hook_min=hook_min, hook_max=hook_max,
+        shots_min=shots_min, shots_max=shots_max,
+        cluster_seconds=cluster_seconds) + COVER_GUIDANCE
     base_user = _build_user_prompt(title, summary, article, tier)
     user = base_user
     source_text = f"{title} {summary} {article}"
@@ -801,11 +828,11 @@ def generate(title: str, summary: str, article: str = "",
 
             problems: list[str] = []
 
-            if len(shots) < 11:
+            if len(shots) < shots_floor:
                 problems.append(
-                    f"You gave only {len(shots)} usable shots. Provide 14-18, "
-                    f"each with a cue copied verbatim from your narration and "
-                    f"a concrete stock-photo query.")
+                    f"You gave only {len(shots)} usable shots. Provide "
+                    f"{shots_min}-{shots_max}, each with a cue copied verbatim "
+                    f"from your narration and a concrete stock-photo query.")
 
             problems += hook_problems(str(obj.get("hook", "")), source_text)
 
