@@ -917,8 +917,20 @@ def generate(title: str, summary: str, article: str = "",
                     str(obj.get("hook", "")), title)),
             )
 
-        except (urllib.error.URLError, urllib.error.HTTPError,
-                json.JSONDecodeError, KeyError) as exc:
+        # OSError, not URLError. A read timeout raises TimeoutError, and
+        # TimeoutError is a SIBLING of URLError under OSError, not a
+        # subclass -- so the old clause let it straight through. It then
+        # escaped this retry loop, the best-draft path below and
+        # _fallback(), and killed the whole build.
+        #
+        # That is the 19 Oct outage: two 503s from Gemini were caught and
+        # retried correctly, then attempt 3 hung for the full 90s and
+        # raised "The read operation timed out". The 503s were survivable;
+        # the hang was not.
+        #
+        # OSError also covers connection resets, DNS and TLS failures,
+        # which are the same kind of transient problem.
+        except (OSError, json.JSONDecodeError, KeyError) as exc:
             last_err = exc
             print(f"  ! attempt {attempt} failed: {exc}")
             # A 503 means "busy, come back shortly". Retrying four times

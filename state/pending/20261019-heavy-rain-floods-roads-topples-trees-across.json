@@ -8,7 +8,9 @@
   "shots_found": "29/29",
   "cover_text": "FALLEN LEAVES FLOOD SEOUL",
   "built_at": "2026-10-19T00:41:44.375827+00:00",
-  "status": "pending",
+  "status": "failed",
   "tier": "safe",
-  "video_url": ""
+  "video_url": "",
+  "last_error": "release upload failed, so there is no public URL for Instagram to fetch; out/ is not committed so the video cannot be re-uploaded",
+  "attempts": 1
 }
