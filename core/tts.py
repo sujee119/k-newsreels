@@ -158,12 +158,29 @@ def _engine_gemini(text: str, mp3_path: Path) -> list[Word] | None:
             "x-goog-api-key": config.GEMINI_API_KEY,
             "Content-Type": "application/json",
         })
-    try:
-        with urllib.request.urlopen(req, timeout=180) as resp:
-            payload = _json.loads(resp.read())
-    except urllib.error.HTTPError as exc:
-        detail = exc.read()[:220].decode("utf-8", "ignore")
-        raise RuntimeError(f"returned {exc.code}: {detail}") from exc
+    # The free tier allows 3 requests a minute. One reel needs exactly one
+    # call, so a 429 means something overlapped -- another repo's build, or
+    # a voice audition. Waiting is much better than degrading to gtts's
+    # female voice for that reel, which is the thing this engine exists to
+    # avoid. Any other status fails straight through to the next engine.
+    payload = None
+    last = ""
+    for attempt in range(1, 4):
+        try:
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                payload = _json.loads(resp.read())
+            break
+        except urllib.error.HTTPError as exc:
+            detail = exc.read()[:220].decode("utf-8", "ignore")
+            last = f"returned {exc.code}: {detail}"
+            if exc.code == 429 and attempt < 3:
+                print(f"  ! gemini rate-limited (3/min on the free tier), "
+                      f"waiting 25s -- attempt {attempt} of 3")
+                time.sleep(25)
+                continue
+            raise RuntimeError(last) from exc
+    if payload is None:
+        raise RuntimeError(last or "gemini returned nothing")
 
     data = _find_audio(payload)
     if not data:

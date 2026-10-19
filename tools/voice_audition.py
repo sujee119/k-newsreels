@@ -13,6 +13,7 @@ Writes out/voices/<Voice>.mp3 and prints the paths. Pick one, then:
     gh variable set GEMINI_TTS_VOICE --body Orus -R sujee119/news-reels
 """
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -41,7 +42,11 @@ def main() -> None:
     original = config.GEMINI_TTS_VOICE
     ok, failed = [], []
     try:
-        for voice in voices:
+        for i, voice in enumerate(voices):
+            # 3 requests a minute on the free tier, so pace them rather
+            # than burning two thirds of the list on 429s.
+            if i:
+                time.sleep(21)
             config.GEMINI_TTS_VOICE = voice
             path = out_dir / f"{voice}.mp3"
             try:
