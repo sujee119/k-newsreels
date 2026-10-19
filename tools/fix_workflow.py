@@ -48,7 +48,15 @@ AZURE_ENV = """          # azure is the same neural voices edge borrows, on the 
           AZURE_SPEECH_REGION: ${{ vars.AZURE_SPEECH_REGION || 'koreacentral' }}
 """
 
-MARKER = "GEMINI_TTS_VOICE"
+LENGTH_ENV = """          # Reel length, so it can be tuned with a repo variable instead of a
+          # redeploy. An unset variable arrives as an EMPTY env var rather
+          # than an absent one, which config falls back from, so leaving
+          # these unset keeps the config defaults.
+          TARGET_SECONDS: ${{ vars.TARGET_SECONDS }}
+          MAX_SECONDS: ${{ vars.MAX_SECONDS }}
+"""
+
+MARKER = "TARGET_SECONDS"
 # Steps every version of this workflow has had. Their absence means the
 # file was truncated, whatever the YAML parser says.
 REQUIRED_STEPS = ["Build the reel", "Commit state"]
@@ -137,7 +145,8 @@ def main() -> None:
 
     expected = 0
     for label, block, key in (("gemini", GEMINI_ENV, "GEMINI_TTS_VOICE"),
-                              ("azure", AZURE_ENV, "AZURE_SPEECH_KEY")):
+                              ("azure", AZURE_ENV, "AZURE_SPEECH_KEY"),
+                              ("length", LENGTH_ENV, "TARGET_SECONDS")):
         if key in text:
             print(f"  {label} settings already present, left alone")
             continue
@@ -159,7 +168,8 @@ def main() -> None:
         sys.exit("the edit broke the workflow, so nothing was written:\n  "
                  + "\n  ".join(problems[:6]))
 
-    for key in ("GEMINI_TTS_VOICE", "AZURE_SPEECH_KEY", "TTS_PROVIDERS"):
+    for key in ("GEMINI_TTS_VOICE", "AZURE_SPEECH_KEY", "TTS_PROVIDERS",
+                "TARGET_SECONDS", "MAX_SECONDS"):
         n = len(re.findall(rf"^\s*{key}:", text, re.M))
         if n != 1:
             sys.exit(f"{key} appears {n} times; nothing written")

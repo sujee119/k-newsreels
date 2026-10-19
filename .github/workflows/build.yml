@@ -100,6 +100,12 @@ jobs:
           PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
           TTS_VOICE: ${{ vars.TTS_VOICE || 'en-US-AndrewMultilingualNeural' }}
           TTS_PROVIDERS: ${{ vars.TTS_PROVIDERS || 'gemini,azure,edge,gtts,espeak' }}
+          # Reel length, so it can be tuned with a repo variable instead of a
+          # redeploy. An unset variable arrives as an EMPTY env var rather
+          # than an absent one, which config falls back from, so leaving
+          # these unset keeps the config defaults.
+          TARGET_SECONDS: ${{ vars.TARGET_SECONDS }}
+          MAX_SECONDS: ${{ vars.MAX_SECONDS }}
           # gemini runs on GEMINI_API_KEY above: no second account, and Google
           # lists its TTS models as free of charge on the free tier. It is
           # rate-limited to 3 requests a minute, which one reel never hits.
