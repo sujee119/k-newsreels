@@ -10,6 +10,7 @@ So narration now tries engines in order and uses the first that produces
 audio. Quality degrades down the chain; a worse voice beats no reel, and
 the caller is told which engine was used so it can say so.
 
+  gemini  free on the key the script step already uses, no second account
   azure   the same voices edge uses, but keyed and documented, so no 403
   edge    natural, word timings, breaks when Microsoft feels like it
   gtts    Google Translate's voice, no key, needs network, no timings
@@ -108,6 +109,114 @@ def _rate_to_wpm(rate: str) -> int:
 
 
 # ----------------------------------------------------------------- engines
+
+def _engine_gemini(text: str, mp3_path: Path) -> list[Word] | None:
+    """Gemini TTS, on the key the script step already uses.
+
+    No new account and no card: Google lists these TTS models as free of
+    charge on the free tier. Audio comes back as base64 WAV (24kHz mono
+    16-bit PCM) inside the Interactions response, which ffmpeg turns into
+    the mp3 the rest of the pipeline expects.
+
+    Note this is the Interactions API (/v1beta/interactions), not the
+    generateContent shape -- speech moved there, and the old path returns
+    nothing useful for audio.
+
+    No word timings and no rate parameter, so timings are estimated and
+    _fit_pace does the pacing, exactly as for gtts.
+    """
+    import base64
+    import json as _json
+    import urllib.error
+    import urllib.request
+
+    if not config.GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY is not set")
+
+    body = _json.dumps({
+        "model": config.GEMINI_TTS_MODEL,
+        "input": [{
+            "type": "user_input",
+            "content": [{
+                "type": "text",
+                "text": text,
+                "annotations": [{
+                    "type": "speech_metadata",
+                    "style": config.GEMINI_TTS_STYLE,
+                }],
+            }],
+        }],
+        "response_format": {"type": "audio"},
+        "generation_config": {
+            "speech_config": [{"voice": config.GEMINI_TTS_VOICE}],
+        },
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        "https://generativelanguage.googleapis.com/v1beta/interactions",
+        data=body, headers={
+            "x-goog-api-key": config.GEMINI_API_KEY,
+            "Content-Type": "application/json",
+        })
+    try:
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            payload = _json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        detail = exc.read()[:220].decode("utf-8", "ignore")
+        raise RuntimeError(f"returned {exc.code}: {detail}") from exc
+
+    data = _find_audio(payload)
+    if not data:
+        raise RuntimeError(
+            f"no audio in the response: {str(payload)[:200]}")
+
+    wav = mp3_path.with_suffix(".gemini.wav")
+    wav.write_bytes(base64.b64decode(data))
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-i", str(wav),
+             "-codec:a", "libmp3lame", "-q:a", "4", str(mp3_path)],
+            check=True, capture_output=True)
+    finally:
+        wav.unlink(missing_ok=True)
+
+    if not _usable(mp3_path):
+        raise RuntimeError("gemini audio did not convert to usable mp3")
+    return None                        # timings get estimated
+
+
+def _find_audio(payload: dict) -> str:
+    """Pull the base64 audio out of an Interactions response.
+
+    Walked rather than indexed: the documented path is
+    steps[] -> model_output -> content[] -> audio -> data, but the shape
+    has already moved once (generateContent -> interactions), so a search
+    survives the next rearrangement instead of raising KeyError.
+    """
+    found = ""
+
+    def walk(node):
+        nonlocal found
+        if found:
+            return
+        if isinstance(node, dict):
+            if node.get("type") == "audio" and isinstance(node.get("data"), str):
+                found = node["data"]
+                return
+            # output_audio.data is what the SDK exposes
+            oa = node.get("output_audio")
+            if isinstance(oa, dict) and isinstance(oa.get("data"), str):
+                found = oa["data"]
+                return
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(payload)
+    return found
+
 
 def _ssml(text: str) -> bytes:
     """SSML for one voice at the configured rate.
@@ -270,6 +379,7 @@ def _engine_espeak(text: str, mp3_path: Path) -> list[Word] | None:
 
 
 _ENGINES = {
+    "gemini": _engine_gemini,
     "azure": _engine_azure,
     "edge": _engine_edge,
     "gtts": _engine_gtts,

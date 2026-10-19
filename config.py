@@ -29,8 +29,10 @@ MAX_STORY_AGE_DAYS = 5
 # does not get finished. Everything downstream (the per-section budgets in
 # the prompt, the shot count, the word ceiling) is derived from these two
 # numbers, so this is the only place length is set.
-TARGET_SECONDS = int(os.getenv("TARGET_SECONDS", "34"))
-MAX_SECONDS = int(os.getenv("MAX_SECONDS", "40"))
+# int(os.getenv(...)) would raise on an empty value, which is what an unset
+# repo variable sends, so the fallback goes through `or` instead.
+TARGET_SECONDS = int(os.getenv("TARGET_SECONDS") or 34)
+MAX_SECONDS = int(os.getenv("MAX_SECONDS") or 40)
 # The delivered narration pace, and what the script is sized against. The
 # two must agree: a 229-word narration ran 106s at +8% (2.15 w/s), so
 # hitting 3.3 w/s needs roughly +66%. Sizing the script faster than the
@@ -79,7 +81,24 @@ VOICE_DEEPEN = float(os.getenv("VOICE_DEEPEN", "0.88"))
 # gtts is a female-only last resort, pitched down by VOICE_DEEPEN.
 # espeak is offline and cannot be blocked, so it is the floor that
 # guarantees a reel still gets made.
-TTS_PROVIDERS = os.getenv("TTS_PROVIDERS", "azure,edge,gtts,espeak")
+TTS_PROVIDERS = os.getenv("TTS_PROVIDERS", "gemini,azure,edge,gtts,espeak")
+
+# Gemini TTS. Reuses GEMINI_API_KEY -- no second account, no card, and
+# Google lists these models as free of charge on the free tier. Returns no
+# word timings, so captions are estimated from the audio (same as gtts),
+# and no rate control, so _fit_pace does the pacing afterwards.
+#
+# The voice list has no documented genders. GEMINI_TTS_VOICE is a repo
+# variable so you can audition a few and keep the one you like:
+#   gh variable set GEMINI_TTS_VOICE --body Charon -R <repo>
+# `or` rather than getenv's default: an unset repo variable referenced as
+# ${{ vars.X }} in the workflow arrives as an EMPTY env var, not an absent
+# one, so getenv's default never fires. That is the same trap that made
+# AUTO_PUBLISH skip the publish window.
+GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL") or "gemini-3.8-flash-tts"
+GEMINI_TTS_VOICE = os.getenv("GEMINI_TTS_VOICE") or "Orus"
+GEMINI_TTS_STYLE = os.getenv("GEMINI_TTS_STYLE") or (
+    "a confident male news presenter, clear and brisk, no sing-song")
 
 # Azure Speech. Create a Speech resource on the F0 (free) tier and put the
 # key in the AZURE_SPEECH_KEY secret; the region is the resource's region
@@ -87,7 +106,7 @@ TTS_PROVIDERS = os.getenv("TTS_PROVIDERS", "azure,edge,gtts,espeak")
 # reports itself unavailable and the chain falls through to edge exactly
 # as before -- nothing breaks by leaving these unset.
 AZURE_SPEECH_KEY = os.getenv("AZURE_SPEECH_KEY", "")
-AZURE_SPEECH_REGION = os.getenv("AZURE_SPEECH_REGION", "koreacentral")
+AZURE_SPEECH_REGION = os.getenv("AZURE_SPEECH_REGION") or "koreacentral"
 
 # ---------------------------------------------------------------- video
 
