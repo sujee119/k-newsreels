@@ -11,7 +11,11 @@ name: Watchdog
 on:
   schedule:
     - cron: "53 0 * * *"       # 09:53 Seoul
+    - cron: "53 4 * * *"       # 13:53 Seoul
+    - cron: "53 8 * * *"       # 17:53 Seoul
     - cron: "53 12 * * *"      # 21:53 Seoul
+    - cron: "53 16 * * *"      # 01:53 Seoul
+    - cron: "53 20 * * *"      # 05:53 Seoul
   workflow_dispatch:
 
 permissions:

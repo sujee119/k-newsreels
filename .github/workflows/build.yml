@@ -29,12 +29,19 @@ on:
 permissions:
   contents: write              # release upload + committing state back
 
-# ONE group across both workflows. state/ is committed by
-# whichever run finishes, and two runs pushing it at once is
-# what lost a published status this morning. Serialising them
-# removes the race rather than retrying through it.
+# A group per workflow, NOT one shared with poll.yml. The shared group
+# is what was killing the scheduled builds: with cancel-in-progress
+# false GitHub keeps only ONE pending run per group, so when a poll was
+# running at :47 the build went pending and the next poll -- at most 15
+# minutes later -- evicted it. The build was cancelled before it ran a
+# single step, which is why this was the only workflow going missing.
+#
+# The state race that shared group guarded is already handled below, by
+# the push loop: fetch, rebase -X theirs, reset --soft, three attempts,
+# alert if it still fails. This group only serialises builds with each
+# other, which is all it needs to do.
 concurrency:
-  group: reel-state
+  group: reel-build
   cancel-in-progress: false
 
 jobs:

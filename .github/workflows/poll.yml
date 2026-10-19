@@ -26,12 +26,14 @@ on:
 permissions:
   contents: write
 
-# ONE group across both workflows. state/ is committed by
-# whichever run finishes, and two runs pushing it at once is
-# what lost a published status this morning. Serialising them
-# removes the race rather than retrying through it.
+# A group per workflow, NOT one shared with build.yml. Sharing one
+# meant this workflow -- firing every 15 minutes -- kept evicting the
+# build from the pending queue, because GitHub keeps only one pending
+# run per group. The state race that shared group guarded is already
+# handled below, by the push loop: fetch, rebase -X theirs, reset
+# --soft, three attempts, alert if it still fails.
 concurrency:
-  group: reel-state
+  group: reel-poll
   cancel-in-progress: false
 
 jobs:
