@@ -513,6 +513,26 @@ def cmd_reconcile(args) -> int:
     return 1 if unknown else 0
 
 
+def _cover_frame(video: Path) -> Path | None:
+    """Pull one frame from inside the cover hold, so the catchphrase is on
+    it. Returns None if ffmpeg cannot, which is not worth failing over."""
+    import subprocess
+
+    at = max(0.05, config.COVER_THUMB_MS / 1000.0)
+    if at >= config.COVER_SECONDS:
+        # Past the hold the overlay has faded and the frame would be bare.
+        at = max(0.05, config.COVER_SECONDS * 0.4)
+    out = video.with_name("thumbnail.jpg")
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-ss", f"{at:.2f}",
+             "-i", str(video), "-frames:v", "1", "-q:v", "3", str(out)],
+            check=True, capture_output=True)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+    return out if out.exists() and out.stat().st_size > 2000 else None
+
+
 def cmd_youtube(args) -> int:
     """Upload published reels to YouTube as Shorts.
 
@@ -566,8 +586,23 @@ def cmd_youtube(args) -> int:
 
         man["youtube_id"] = vid
         man.pop("youtube_error", None)
-        _save(man["slug"], man)
         print(f"    -> {youtube.watch_url(vid)}")
+
+        # The cover frame as the grid thumbnail. Without this YouTube
+        # picks its own frame, which is why Hotsciencenews showed videos
+        # with no catchphrase on them. Cosmetic, and it runs after the
+        # video is live, so a failure is recorded and nothing more.
+        thumb = _cover_frame(reel)
+        if thumb:
+            why = youtube.set_thumbnail(vid, thumb)
+            if why:
+                man["thumbnail_note"] = why[:160]
+                print(f"    thumbnail not set: {why[:110]}")
+            else:
+                man["thumbnail"] = "set"
+                print(f"    thumbnail: the cover frame at "
+                      f"{config.COVER_THUMB_MS}ms")
+        _save(man["slug"], man)
         done += 1
 
     print(f"  youtube: {done} uploaded, {skipped} skipped, {failed} failed")

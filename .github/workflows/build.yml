@@ -236,6 +236,12 @@ jobs:
           YT_CATEGORY_ID: ${{ vars.YT_CATEGORY_ID || '28' }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # The thumbnail frame is cut from inside the cover hold, so this
+          # step needs the same cover settings the render used. It never
+          # received them, so a custom COVER_THUMB_MS was ignored here.
+          COVER_ENABLED: ${{ vars.COVER_ENABLED || '1' }}
+          COVER_SECONDS: ${{ vars.COVER_SECONDS || '3.2' }}
+          COVER_THUMB_MS: ${{ vars.COVER_THUMB_MS || '900' }}
         run: python -u run.py youtube
 
       - name: Commit state
