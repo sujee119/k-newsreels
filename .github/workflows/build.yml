@@ -175,7 +175,16 @@ jobs:
             python -u run.py notify "$SLUG" || FAILED=1
             echo "::endgroup::"
           done
-          [ "$FAILED" = "0" ] || echo "::warning::some reels did not publish"
+          if [ "$FAILED" != "0" ]; then
+            echo "::warning::some reels did not publish"
+            # A failed release upload leaves video_url empty, and
+            # autopublish then prints "skip (never uploaded)" on every
+            # run for ever, records no error, and this run still goes
+            # green. That is how two reels sat parked from 19 Oct with
+            # nothing to show it. Retire them and say so out loud.
+            python3 tools/fix_parked.py --write || true
+            python -u run.py alert "Release upload failed for one or more reels. They are now marked failed so they stop being skipped silently. Log: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" || true
+          fi
 
       # The review window has to be honoured inside this run. The poll
       # cron is throttled by GitHub to roughly once every two hours, so
@@ -205,10 +214,12 @@ jobs:
         run: |
           # Reality first: anything already live gets its status corrected
           # so it cannot be posted twice. Never publishes, never gated.
-          python -u run.py reconcile || true
+          python -u run.py reconcile \
+            || echo "::warning::reconcile failed -- published reels may still read as pending"
           # Explicit taps next, so an Approve posts now and a Reject
           # takes the reel out of the running.
-          python -u run.py poll || true
+          python -u run.py poll \
+            || echo "::warning::poll failed -- an Approve or Reject tap was not read"
           python -u run.py autopublish
 
       # After Instagram, never before. Returns 0 even on failure so a
