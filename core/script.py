@@ -385,15 +385,32 @@ def _call_gemini(system: str, user: str) -> str:
 
     last = None
     for model in models[:6]:
-        try:
-            return _gemini_once(model, system, user)
-        except urllib.error.HTTPError as exc:
-            if exc.code != 404:
-                raise
-            last = exc
-            print(f"  ! model '{model}' not available, trying next")
-            if model in _GEMINI_MODEL_CACHE:
-                _GEMINI_MODEL_CACHE.remove(model)
+        for attempt in (1, 2, 3):
+            try:
+                return _gemini_once(model, system, user)
+            except urllib.error.HTTPError as exc:
+                # 429 is the free tier's per-minute cap; 5xx is Gemini
+                # being down. Both are transient and neither was
+                # retried here -- only 404 was handled, so the 503s of
+                # 20 Oct raised on the first call, four times over.
+                if exc.code == 429 or 500 <= exc.code < 600:
+                    if attempt < 3:
+                        wait = 25 * attempt
+                        why = ("rate-limited (429)" if exc.code == 429
+                               else f"returned {exc.code}, its end not ours")
+                        print(f"  ! gemini {why}, waiting {wait}s "
+                              f"-- attempt {attempt} of 3")
+                        time.sleep(wait)
+                        continue
+                    last = exc
+                    break
+                if exc.code != 404:
+                    raise
+                last = exc
+                print(f"  ! model '{model}' not available, trying next")
+                if model in _GEMINI_MODEL_CACHE:
+                    _GEMINI_MODEL_CACHE.remove(model)
+                break
     raise last or RuntimeError("no usable Gemini model")
 
 
@@ -442,6 +459,48 @@ def _call_ollama(system: str, user: str) -> str:
 
 
 PROVIDERS = {"gemini": _call_gemini, "groq": _call_groq, "ollama": _call_ollama}
+
+
+class AllProvidersFailed(OSError):
+    """Every provider in the chain failed.
+
+    OSError deliberately: each failure was a failed network call, and
+    write_script's attempt loop already catches OSError. So the chain
+    is retried across all four attempts with no new handler, and only
+    a total outage reaches _fallback().
+    """
+
+
+def call(system: str, user: str) -> str:
+    """Ask each provider in turn until one answers.
+
+    Narration has worked this way since the start -- TTS_PROVIDERS is
+    a comma-separated chain and speak() walks it, which is why a dead
+    voice service has never cost a reel. The script asked one
+    provider, so Gemini's 503s on 20 Oct took both reels channels down
+    for twelve hours while four attempts hit the same dead endpoint.
+
+    Same signature as a provider function, so callers already doing
+    fn(system, user) need no change.
+    """
+    names = [n.strip() for n in config.SCRIPT_PROVIDERS.split(",") if n.strip()]
+    problems: list[str] = []
+    for name in names:
+        fn = PROVIDERS.get(name)
+        if fn is None:
+            problems.append(f"{name}: no such provider")
+            continue
+        try:
+            out = fn(system, user)
+        except Exception as exc:
+            problems.append(f"{name}: {type(exc).__name__} {str(exc)[:80]}")
+            print(f"  ! {name} unavailable, trying the next provider")
+            continue
+        if name != names[0]:
+            print(f"  ! answered by '{name}', not '{names[0]}'")
+        return out
+    raise AllProvidersFailed(
+        "no script provider answered:\n  " + "\n  ".join(problems))
 
 
 # ----------------------------------------------------------- similarity guard
@@ -780,11 +839,14 @@ def generate(title: str, summary: str, article: str = "",
     shots_floor = max(3, shots_min - 2)
     cluster_seconds = at(0.24)
 
-    if provider == "none" or provider not in PROVIDERS:
+    if provider == "none":
         print("  i no LLM provider configured -- using fallback script")
         return _fallback(title, summary)
 
-    fn = PROVIDERS[provider]
+    # The whole chain, not one provider. The four attempts below used
+    # to hit the same endpoint four times; now each attempt can fall
+    # through to groq and then ollama.
+    fn = call
     system = SYSTEM_PROMPT.format(
         target_words=target_words, max_words=max_words,
         total_seconds=total, t_hook=t_hook, t_ground=t_ground,

@@ -48,6 +48,14 @@ USE_FULL_ARTICLE = True
 # "gemini" | "groq" | "ollama" | "none"
 # "none" falls back to a deterministic template (safe, but flat).
 SCRIPT_PROVIDER = os.getenv("SCRIPT_PROVIDER", "gemini")
+# A CHAIN, like TTS_PROVIDERS. Asking a single provider is what took
+# this channel down for twelve hours on 20 Oct when Gemini returned
+# 503; narration rode it out because it has always had a chain.
+# SCRIPT_PROVIDER still leads, so nothing existing changes. ollama
+# costs nothing to leave in: on a runner it refuses instantly, and on
+# a machine running Ollama it simply works.
+SCRIPT_PROVIDERS = (os.getenv("SCRIPT_PROVIDERS")
+                    or f"{SCRIPT_PROVIDER or 'gemini'},groq,ollama")
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
