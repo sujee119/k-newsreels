@@ -347,6 +347,32 @@ def cmd_pending_slugs(args) -> int:
     return 0
 
 
+def cmd_backfill_slugs(args) -> int:
+    """The oldest published reels that never reached YouTube.
+
+    One slug per line, so the workflow can fetch each one's release
+    asset back into out/ -- which is the only thing standing between
+    cmd_youtube and uploading them.
+    """
+    rows = []
+    for mf in PENDING.glob("*.json"):
+        try:
+            man = json.loads(mf.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        if man.get("status") != "published" or man.get("youtube_id"):
+            continue
+        rows.append((man.get("built_at", ""), man["slug"]))
+    rows.sort()
+    try:
+        limit = max(1, int(getattr(args, "count", 8) or 8))
+    except (TypeError, ValueError):
+        limit = 8
+    for _, slug in rows[:limit]:
+        print(slug)
+    return 0
+
+
 def cmd_hours_since_build(args) -> int:
     """Hours since the newest reel was built, or 999 if there are none.
 
@@ -991,6 +1017,10 @@ def main() -> int:
 
     s = sub.add_parser("alert")
     s.add_argument("text"); s.set_defaults(fn=cmd_alert)
+
+    s = sub.add_parser("backfill-slugs")
+    s.add_argument("count", nargs="?", type=int, default=8)
+    s.set_defaults(fn=cmd_backfill_slugs)
 
     y = sub.add_parser("youtube")
     y.add_argument("slug", nargs="?", default="")

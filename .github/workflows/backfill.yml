@@ -1,0 +1,106 @@
+name: Backfill YouTube
+
+# Reels that were built before the YouTube binding was sorted and so
+# were never offered to YouTube. They are finished and still sitting
+# in their releases; cmd_youtube skips them only because out/ is
+# gitignored and the file is gone.
+#
+# Manual on purpose. The daily cap is 100 uploads, so that is not the
+# constraint -- the constraint is that dumping fifty videos at once on
+# a small channel is a content dump, and old news ages differently
+# from old science.
+on:
+  workflow_dispatch:
+    inputs:
+      count:
+        description: "How many to upload this run"
+        required: false
+        default: "8"
+
+permissions:
+  contents: write
+
+# Its OWN group. Sharing the builds' group is exactly how poll.yml was
+# cancelling scheduled builds on 20 Oct: GitHub keeps one pending run
+# per group and evicts the rest. The state push loop below handles any
+# overlap instead.
+concurrency:
+  group: reel-backfill
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -q requests
+
+      - name: Fetch the videos back from their releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          N="${{ github.event.inputs.count || '8' }}"
+          SLUGS=$(python -u run.py backfill-slugs "$N")
+          if [ -z "$SLUGS" ]; then
+            echo "nothing left to backfill"
+            exit 0
+          fi
+          GOT=0
+          for SLUG in $SLUGS; do
+            mkdir -p "out/$SLUG"
+            if gh release download "reel-$SLUG" \
+                 --repo "${{ github.repository }}" \
+                 --pattern reel.mp4 --dir "out/$SLUG" 2>/dev/null; then
+              GOT=$((GOT + 1))
+              echo "  fetched $SLUG"
+            else
+              # The release may have been cleaned up. Not an error --
+              # that reel simply cannot be recovered.
+              echo "  no release asset for $SLUG, skipping"
+            fi
+          done
+          echo "fetched $GOT video(s)"
+
+      - name: Upload them
+        env:
+          YT_ENABLED: ${{ vars.YT_ENABLED || '0' }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          YT_PRIVACY: ${{ vars.YT_PRIVACY || 'public' }}
+          YT_CATEGORY_ID: ${{ vars.YT_CATEGORY_ID || '28' }}
+          COVER_ENABLED: ${{ vars.COVER_ENABLED || '1' }}
+          COVER_SECONDS: ${{ vars.COVER_SECONDS || '3.2' }}
+          COVER_THUMB_MS: ${{ vars.COVER_THUMB_MS || '900' }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python -u run.py youtube
+
+      - name: Commit state
+        if: always()
+        continue-on-error: true
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          BR="${GITHUB_REF_NAME}"
+          git add state/
+          git diff --staged --quiet && { echo "no state changes"; exit 0; }
+          git commit -q -m "backfill $(date -u +%FT%TZ)"
+          for attempt in 1 2 3; do
+            if git push; then echo "state pushed"; exit 0; fi
+            git fetch -q origin "$BR"
+            git rebase -X theirs "origin/$BR" || {
+              git rebase --abort || true
+              git reset --soft "origin/$BR"
+              git add state/
+              git diff --staged --quiet || git commit -q -m "backfill $(date -u +%FT%TZ)"
+            }
+          done
+          echo "::warning::could not push state after 3 attempts"
