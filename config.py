@@ -194,10 +194,10 @@ COVER_THUMB_MS = int(os.getenv("COVER_THUMB_MS", "900"))
 # ---------------------------------------------------------------- outro
 
 # Spoken call to action, appended to every script. Empty string disables.
-CTA_TEXT = os.getenv("CTA_TEXT", "Follow for more science, every day.")
+CTA_TEXT = os.getenv("CTA_TEXT") or "Follow for more K-News."
 
 # Text on the end card.
-CTA_CARD = os.getenv("CTA_CARD", "FOLLOW\nfor more science")
+CTA_CARD = os.getenv("CTA_CARD") or "FOLLOW\nfor more K-News"
 CTA_CARD_SECONDS = 2.6
 
 # ---------------------------------------------------------------- publish

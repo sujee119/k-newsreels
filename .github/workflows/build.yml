@@ -134,6 +134,8 @@ jobs:
           COVER_SECONDS: ${{ vars.COVER_SECONDS || '3.2' }}
           COVER_TOP: ${{ vars.COVER_TOP || '330' }}
           COVER_THUMB_MS: ${{ vars.COVER_THUMB_MS || '900' }}
+          CTA_TEXT: ${{ vars.CTA_TEXT || 'Follow for more K-News.' }}
+          CTA_CARD: ${{ vars.CTA_CARD || 'FOLLOW\nfor more K-News' }}
           VIDEO_PRESET: medium
         run: |
           # -u matters: without it Python block-buffers stdout on a runner
