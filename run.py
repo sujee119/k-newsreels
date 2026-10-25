@@ -151,18 +151,41 @@ def _build_one(args) -> int:
         pass
     print(f"  {total:.1f}s, {len(words)} words"
           + (f" [{engine} voice]" if engine else ""))
-    # A fallback engine sounds noticeably worse. Say so once, loudly, rather
-    # than quietly shipping a robotic reel and leaving you to wonder.
-    if engine and engine != "edge":
-        print(f"  ! this reel uses the '{engine}' voice because edge-tts was "
-              f"unavailable -- quality is lower than usual")
+    # A fallback engine sounds noticeably worse. Say so once, loudly,
+    # rather than quietly shipping a robotic reel and leaving you to
+    # wonder.
+    #
+    # Both the test and the message used to be hardcoded to "edge",
+    # which was right while TTS_PROVIDERS was pinned to "edge,gtts".
+    # Once the chain became "gemini,..." this fired on EVERY build and
+    # blamed edge for an outage that had not happened -- console line
+    # and Telegram alert alike. The one warning that would have caught
+    # the 21 Oct fall-through to gtts was already crying wolf, which is
+    # why four days of robotic reels went out unnoticed.
+    #
+    # Two separate things now. Any engine that is not the chain leader
+    # is worth a console line. Only a genuinely last-resort engine --
+    # the two that actually sound robotic -- is worth interrupting you.
+    _lead = next((n.strip() for n in config.TTS_PROVIDERS.split(",")
+                  if n.strip()), "")
+    if engine and _lead and engine != _lead:
+        print(f"  ! this reel uses the '{engine}' voice, not '{_lead}' -- "
+              f"'{_lead}' was unavailable and quality is lower than usual")
+    if engine in ("gtts", "espeak"):
+        _why = ("gtts is female and gets pitched down to sound male"
+                if engine == "gtts" else
+                "espeak is formant synthesis, not a neural voice")
+        print(f"  ! '{engine}' is a last-resort engine -- {_why}, so this "
+              f"reel sounds robotic. Everything above it in "
+              f"'{config.TTS_PROVIDERS}' refused.")
         try:
             from core import telegram
             if telegram.enabled():
                 telegram.send_text(
-                    f"Heads up: narration fell back to '{engine}' because "
-                    f"edge-tts was refused. The reel still posts, but the "
-                    f"voice is worse. Reel: {story.title[:70]}")
+                    f"Narration fell all the way to '{engine}' -- {_why}, "
+                    f"so this one sounds robotic. Everything above it in "
+                    f"'{config.TTS_PROVIDERS}' refused. It still posts. "
+                    f"Reel: {story.title[:70]}")
         except Exception:
             pass
 
@@ -211,6 +234,13 @@ def _build_one(args) -> int:
         "caption": caption,
         "duration": dur,
         "shots_found": f"{found}/{len(shots)}",
+        # Which voice actually spoke. Printed to the log before, and
+        # only there -- so when the chain quietly fell through to gtts
+        # on 21 Oct there was nothing left afterwards to show it, and it
+        # took four days and a spectrum analysis of the published mp4s
+        # to find. One field here makes it greppable for ever:
+        #   grep -h tts_engine state/pending/*.json | sort | uniq -c
+        "tts_engine": engine,
         "cover_text": getattr(sc, "cover_text", ""),
         "built_at": datetime.now(timezone.utc).isoformat(),
         "status": "pending",

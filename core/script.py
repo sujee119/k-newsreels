@@ -1009,6 +1009,12 @@ def generate(title: str, summary: str, article: str = "",
         count, obj, narration, shots = best
         print(f"  ~ no clean draft after {attempts} attempts; using the best "
               f"one ({count} remaining issue(s)) -- review script.txt")
+        # ...but not at any length. "Too long at N words" was raised as a
+        # problem above and then ignored right here, which is how a
+        # 174-word script became a 58-second reel on 22 Oct against a
+        # 99-word ceiling. Ten of fourteen reels built after 21 Oct were
+        # over it.
+        narration, shots = _trim_to_ceiling(narration, shots, max_words)
         return Script(
             **{s_: str(obj.get(s_, "")).strip() for s_ in SECTIONS},
             caption=str(obj.get("caption", title)).strip(),
@@ -1022,6 +1028,62 @@ def generate(title: str, summary: str, article: str = "",
 
     print(f"  ! all attempts failed ({last_err}) -- using fallback")
     return _fallback(title, summary)
+
+
+def _trim_to_ceiling(narration: str, shots: list,
+                     max_words: int) -> tuple[str, list]:
+    """Bring an over-long draft under the word ceiling.
+
+    Sentences come out of the MIDDLE, never the end. The format is a
+    hook that opens a loop and a closing line that pays it off, and
+    loop_is_closed() is checked precisely because that payoff is the one
+    line the reel cannot ship without. Cutting the tail -- the obvious
+    implementation -- would remove it every time.
+
+    Shots carry a "cue" copied verbatim from the narration, so any shot
+    whose cue was in a dropped sentence no longer has anything to sync
+    to and goes with it.
+    """
+    words = narration.split()
+    if len(words) <= max_words:
+        return narration, shots
+
+    parts = re.findall(r"[^.!?]+[.!?]*\s*", narration)
+    parts = [p for p in parts if p.strip()]
+    if len(parts) < 3:                     # nothing safe to take out
+        print(f"  ! {len(words)} words, over the {max_words} ceiling, but "
+              f"it is {len(parts)} sentence(s) -- shipping it whole")
+        return narration, shots
+
+    keep = list(parts)
+    i = len(keep) - 2                      # last sentence before the payoff
+    while sum(len(p.split()) for p in keep) > max_words and len(keep) > 2:
+        if i <= 0:                         # never drop the hook
+            i = len(keep) - 2
+            if i <= 0:
+                break
+        keep.pop(i)
+        i -= 1
+
+    out = "".join(keep).strip()
+    n = len(out.split())
+    print(f"  ~ trimmed {len(words)} words to {n} ({len(parts) - len(keep)} "
+          f"sentence(s) out of the middle); hook and payoff kept")
+    if n > max_words:
+        # Hook plus payoff alone are over the ceiling. Nothing further can
+        # come out without losing one of them, so say so rather than
+        # reporting a ceiling that was not actually reached.
+        print(f"  ! still {n} words, over the {max_words} ceiling -- the "
+              f"hook and the payoff alone exceed it. Shipping at "
+              f"~{n / max(0.1, config.WORDS_PER_SECOND):.0f}s.")
+
+    low = out.lower()
+    kept_shots = [s for s in shots
+                  if str(s.get("cue", "")).strip().lower() in low]
+    if len(kept_shots) != len(shots):
+        print(f"  ~ dropped {len(shots) - len(kept_shots)} shot(s) whose cue "
+              f"was in a trimmed sentence")
+    return out, (kept_shots or shots)
 
 
 def build_caption(script: Script, title: str, link: str,
