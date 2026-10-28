@@ -61,7 +61,15 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+# A LIST, not one name. "llama-3.3-70b-versatile" was retired by Groq on
+# 16 Aug 2026 and every call 404'd silently for months, which left the
+# provider chain gemini-only without anything saying so. Walked in order
+# until one answers, so the next retirement costs one model.
+#
+# Tunable without a code change:
+#   gh variable set GROQ_MODELS --body 'openai/gpt-oss-120b,llama-3.1-8b-instant'
+GROQ_MODELS = (os.getenv("GROQ_MODELS") or os.getenv("GROQ_MODEL")
+               or "openai/gpt-oss-120b,llama-3.3-70b-versatile,llama-3.1-8b-instant")
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")

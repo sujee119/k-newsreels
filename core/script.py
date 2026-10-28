@@ -427,21 +427,48 @@ def _gemini_once(model: str, system: str, user: str) -> str:
 
 
 def _call_groq(system: str, user: str) -> str:
-    payload = {
-        "model": config.GROQ_MODEL,
-        "temperature": 0.8,
-        "response_format": {"type": "json_object"},
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-    }
-    data = _post_json(
-        "https://api.groq.com/openai/v1/chat/completions",
-        payload,
-        {"Authorization": f"Bearer {config.GROQ_API_KEY}"},
-    )
-    return data["choices"][0]["message"]["content"]
+    """Ask Groq, trying each configured model until one exists.
+
+    One hardcoded model name is how this link died without a sound:
+    llama-3.3-70b-versatile was retired on 16 Aug 2026 and every call
+    after that returned 404, so the provider chain was gemini-only and
+    nothing said so. A list survives the next retirement.
+
+    400 and 404 mean "no such model here" and move to the next name.
+    Anything else -- 401 for a bad key, 429 for the rate limit, 5xx for
+    an outage -- is not about the model, so it propagates rather than
+    being retried pointlessly against three names.
+    """
+    names = [n.strip() for n in config.GROQ_MODELS.split(",") if n.strip()]
+    last = None
+    for name in names:
+        payload = {
+            "model": name,
+            "temperature": 0.8,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        }
+        try:
+            data = _post_json(
+                "https://api.groq.com/openai/v1/chat/completions",
+                payload,
+                {"Authorization": f"Bearer {config.GROQ_API_KEY}"},
+            )
+        except urllib.error.HTTPError as exc:
+            if exc.code in (400, 404):
+                last = exc
+                print(f"  ! groq has no model '{name}' ({exc.code}), "
+                      f"trying the next")
+                continue
+            raise
+        if name != names[0]:
+            print(f"  ! groq answered on '{name}', not '{names[0]}'")
+        return data["choices"][0]["message"]["content"]
+    raise last or RuntimeError(
+        f"no usable Groq model in '{config.GROQ_MODELS}'")
 
 
 def _call_ollama(system: str, user: str) -> str:
