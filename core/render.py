@@ -34,9 +34,37 @@ def probe_duration(path: Path) -> float:
 
 # --------------------------------------------------------------- per shot
 
+def _render_clip(shot: Shot, dur: float, index: int,
+                 out_path: Path) -> Path:
+    """Stock footage -> one clip of the right length.
+
+    Deliberately no zoompan. The footage already moves, and a Ken Burns
+    push laid over real camera motion reads as a mistake rather than as
+    more motion. -stream_loop covers a clip shorter than its shot, and
+    -an drops the stock audio, which would otherwise be mixed under the
+    narration.
+    """
+    W, H = config.WIDTH, config.HEIGHT
+    vf = (f"scale={W}:{H}:force_original_aspect_ratio=increase,"
+          f"crop={W}:{H},"
+          f"eq=brightness=-{config.SHOT_DIM}:saturation=1.08,"
+          f"format=yuv420p")
+    _run([
+        "ffmpeg", "-y", "-v", "error",
+        "-stream_loop", "-1", "-i", str(shot.path),
+        "-t", f"{dur:.3f}", "-vf", vf, "-an",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+        "-pix_fmt", "yuv420p", "-r", str(config.FPS),
+        str(out_path),
+    ], f"shot {index} clip")
+    return out_path
+
+
 def render_shot(shot: Shot, index: int, out_path: Path) -> Path:
     """One still image -> one moving clip of the right length."""
     dur = shot.duration + config.SHOT_TRANSITION
+    if getattr(shot, "is_video", False):
+        return _render_clip(shot, dur, index, out_path)
     frames = max(2, int(dur * config.FPS))
     W, H = config.WIDTH, config.HEIGHT
 

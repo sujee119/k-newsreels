@@ -45,6 +45,7 @@ class Shot:
     end: float = 0.0
     path: Path | None = None
     credit: dict = field(default_factory=dict)
+    is_video: bool = False      # stock footage, not a still -- no zoompan
 
     @property
     def duration(self) -> float:
@@ -218,6 +219,146 @@ def _src_pixabay(query: str) -> list[dict]:
     } for h in data.get("hits", [])]
 
 
+def _download_video(url: str, dest: Path) -> bool:
+    """Save a stock clip, and prove ffmpeg can actually read it.
+
+    _download() runs everything through PIL and re-encodes to JPEG,
+    which an mp4 cannot survive, so footage needs its own path. ffprobe
+    is the check: a clip that will not probe will not render either, and
+    learning that here leaves time to try the next candidate instead of
+    failing mid-render.
+    """
+    import subprocess
+    tmp = dest.with_suffix(".tmpvid")
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        with urllib.request.urlopen(req, timeout=120) as resp, \
+                open(tmp, "wb") as fh:
+            shutil.copyfileobj(resp, fh)
+        if tmp.stat().st_size < 50_000:        # stub or error page
+            tmp.unlink(missing_ok=True)
+            return False
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=height", "-of", "csv=p=0", str(tmp)],
+            capture_output=True, text=True, timeout=60)
+        if probe.returncode != 0 or not probe.stdout.strip():
+            tmp.unlink(missing_ok=True)
+            return False
+        tmp.replace(dest)
+        return True
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        dest.unlink(missing_ok=True)
+        return False
+
+
+def _src_pexels_video(query: str) -> list[dict]:
+    """Pexels footage. Same key as the photo search, /videos/ endpoint."""
+    if not config.PEXELS_API_KEY:
+        return []
+    url = ("https://api.pexels.com/videos/search?"
+           + urllib.parse.urlencode({
+               "query": query, "per_page": 8,
+               "orientation": "portrait", "size": "medium"}))
+    try:
+        data = _get_json(url, {"Authorization": config.PEXELS_API_KEY})
+    except Exception:
+        return []
+
+    out = []
+    for v in data.get("videos", []):
+        files = [f for f in v.get("video_files", [])
+                 if f.get("file_type") == "video/mp4"
+                 and (f.get("height") or 0) >= config.STOCK_VIDEO_MIN_PX]
+        if not files:
+            continue
+        # Smallest rendition that still clears the floor: a 4K download
+        # costs minutes and is cropped to 1080 high anyway.
+        files.sort(key=lambda f: f.get("height") or 0)
+        slug = (v.get("url", "").rstrip("/").split("/")[-1] or query)
+        out.append({
+            "url": files[0]["link"],
+            "credit": {
+                "title": slug.replace("-", " ")[:60] or query,
+                "creator": (v.get("user") or {}).get("name", "unknown"),
+                "licence": "Pexels Licence",
+                "source": v.get("url", ""),
+                "via": "Pexels",
+            },
+        })
+    return out
+
+
+def _src_pixabay_video(query: str) -> list[dict]:
+    if not config.PIXABAY_API_KEY:
+        return []
+    url = ("https://pixabay.com/api/videos/?"
+           + urllib.parse.urlencode({
+               "key": config.PIXABAY_API_KEY, "q": query,
+               "per_page": 8, "safesearch": "true"}))
+    try:
+        data = _get_json(url)
+    except Exception:
+        return []
+
+    out = []
+    for h in data.get("hits", []):
+        vids = h.get("videos") or {}
+        pick = None
+        for name in ("medium", "small", "large", "tiny"):
+            v = vids.get(name) or {}
+            if v.get("url") and (v.get("height") or 0) >= config.STOCK_VIDEO_MIN_PX:
+                pick = v
+                break
+        if not pick:
+            continue
+        out.append({
+            "url": pick["url"],
+            "credit": {
+                "title": h.get("tags", query),
+                "creator": h.get("user", "unknown"),
+                "licence": "Pixabay Licence",
+                "source": h.get("pageURL", ""),
+                "via": "Pixabay",
+            },
+        })
+    return out
+
+
+VIDEO_SOURCES = [
+    ("pexels-v", _src_pexels_video),
+    ("pixabay-v", _src_pixabay_video),
+]
+
+_VIDEO_CACHE: dict[str, list[dict]] = {}
+
+
+def video_candidates_for(query: str) -> list[dict]:
+    """Stock clips for one query, cached like the image candidates.
+
+    Narrower than candidates_for(): no word-dropping variants, because a
+    one-word query against a video library returns generic filler, and
+    generic filler is worse than the specific photo it would replace.
+    """
+    if query in _VIDEO_CACHE:
+        return _VIDEO_CACHE[query]
+    found, seen = [], set()
+    for name, fn in VIDEO_SOURCES:
+        try:
+            cands = fn(query)
+        except Exception:
+            continue
+        for cand in cands:
+            if cand["url"] in seen:
+                continue
+            seen.add(cand["url"])
+            cand["via_source"] = name
+            found.append(cand)
+    _VIDEO_CACHE[query] = found
+    return found
+
+
 SOURCES = [
     ("pexels", _src_pexels),         # best looking, used first when keyed
     ("openverse", _src_openverse),
@@ -270,7 +411,24 @@ def candidates_for(query: str) -> list[dict]:
 
 def resolve_shot(shot: Shot, workdir: Path, index: int,
                  used: set[str]) -> bool:
-    """Download an image for one shot, avoiding any already used."""
+    """Download footage, or failing that an image, for one shot."""
+    # Footage first. Anything the video libraries cannot cover falls
+    # straight through to the photo pipeline below, so a thin result is
+    # today's behaviour rather than a failure.
+    if config.STOCK_VIDEO:
+        for cand in video_candidates_for(shot.query):
+            if cand["url"] in used:
+                continue
+            dest = workdir / f"shot{index:02d}.mp4"
+            if _download_video(cand["url"], dest):
+                used.add(cand["url"])
+                shot.path = dest
+                shot.credit = cand["credit"]
+                shot.is_video = True
+                print(f"    shot {index:2d}  {cand.get('via_source','video'):10s} "
+                      f"[clip] {shot.query[:28]}")
+                return True
+
     for cand in candidates_for(shot.query):
         if cand["url"] in used:
             continue

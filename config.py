@@ -127,6 +127,15 @@ VIDEO_PRESET = os.getenv("VIDEO_PRESET", "veryfast")
 
 # Stock imagery. Openverse and Wikimedia need no key and are always tried;
 # these two keys are optional and improve the look when present.
+# Stock FOOTAGE rather than stills. The renderer fakes motion on a
+# photo with zoompan; a real clip just moves. Needs PEXELS_API_KEY --
+# without it the video sources return nothing and the build falls back
+# to photos exactly as before.
+STOCK_VIDEO = (os.getenv("STOCK_VIDEO") or "1") not in ("0", "false", "False")
+# Reject clips shorter than this edge, in pixels. Stock libraries serve
+# several renditions per clip and the small ones look soft full-frame.
+STOCK_VIDEO_MIN_PX = int(os.getenv("STOCK_VIDEO_MIN_PX") or 540)
+
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
 PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY", "")
 
