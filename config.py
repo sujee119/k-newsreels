@@ -143,9 +143,20 @@ STOCK_VIDEO = (os.getenv("STOCK_VIDEO") or "1") not in ("0", "false", "False")
 # Reject clips shorter than this edge, in pixels. Stock libraries serve
 # several renditions per clip and the small ones look soft full-frame.
 STOCK_VIDEO_MIN_PX = int(os.getenv("STOCK_VIDEO_MIN_PX") or 540)
+# How many words a clip's tags must share with the shot query before the
+# clip is believed. Pixabay's video library is small and its API answers
+# every query with something, so without this a reel about an AI
+# screwdriver gets social-media scrolling and a horse's eye -- which is
+# exactly what happened on 28 Oct. 0 disables the gate.
+CLIP_MATCH_MIN = int(os.getenv("CLIP_MATCH_MIN") or 1)
 
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
 PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY", "")
+# Coverr: a curated video library with title, description and tags, so
+# the relevance gate can actually judge a clip. Asked before Pixabay for
+# that reason. A demo app allows 50 requests/hour; exceeding it returns
+# 429, which degrades to Pixabay and then to photos.
+COVERR_API_KEY = os.getenv("COVERR_API_KEY", "")
 
 # Crossfade length between shots, seconds.
 SHOT_TRANSITION = 0.40

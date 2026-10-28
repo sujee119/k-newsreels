@@ -253,6 +253,60 @@ def _download_video(url: str, dest: Path) -> bool:
         return False
 
 
+# Words that say nothing about subject matter. A query is mostly these
+# plus one or two real nouns, and matching on "closeup" would let any
+# close-up of anything through.
+_CLIP_STOP = {
+    "the", "and", "with", "for", "from", "into", "onto", "over", "under",
+    "closeup", "close", "shot", "view", "macro", "angle", "detail",
+    "footage", "video", "clip", "scene", "background", "abstract",
+    "modern", "new", "old", "big", "small", "slow", "fast", "person",
+    "people", "man", "woman", "hand", "hands",
+}
+
+
+def _clip_words(text: str) -> set:
+    return {w for w in re.findall(r"[a-z]+", (text or "").lower())
+            if len(w) > 2 and w not in _CLIP_STOP}
+
+
+def _clip_matches(query: str, *fields: str) -> set:
+    """Meaningful words the query and the clip's own metadata share.
+
+    The only defence against a video API that would rather return
+    something irrelevant than nothing at all.
+    """
+    want = _clip_words(query)
+    if not want:
+        return set()
+    have = set()
+    for f in fields:
+        have |= _clip_words(f)
+    return want & have
+
+
+def _clip_ok(query: str, shared: set) -> bool:
+    """Is the clip really about this shot, or does it just share a word?
+
+    One shared modifier is not a match. "electric screwdriver closeup"
+    against a clip titled "Cutting Wood With a Circular Electric Saw"
+    shares "electric" -- and is still a saw. That got through an
+    earlier version of this gate and was caught in testing.
+
+    English noun phrases put the head noun last, so the query's final
+    content word is its subject. Accept a clip that matches the subject,
+    or one that matches two content words: "macro lens camera sensor"
+    against "camera lens" shares two and is genuinely close, while
+    sharing only "electric" is not.
+    """
+    if len(shared) < config.CLIP_MATCH_MIN:
+        return False
+    words = [w for w in re.findall(r"[a-z]+", (query or "").lower())
+             if len(w) > 2 and w not in _CLIP_STOP]
+    head = words[-1] if words else ""
+    return head in shared or len(shared) >= 2
+
+
 def _src_pexels_video(query: str) -> list[dict]:
     """Pexels footage. Same key as the photo search, /videos/ endpoint."""
     if not config.PEXELS_API_KEY:
@@ -277,7 +331,11 @@ def _src_pexels_video(query: str) -> list[dict]:
         # costs minutes and is cropped to 1080 high anyway.
         files.sort(key=lambda f: f.get("height") or 0)
         slug = (v.get("url", "").rstrip("/").split("/")[-1] or query)
+        shared = _clip_matches(query, slug.replace("-", " "))
+        if not _clip_ok(query, shared):
+            continue
         out.append({
+            "match": sorted(shared),
             "url": files[0]["link"],
             "credit": {
                 "title": slug.replace("-", " ")[:60] or query,
@@ -313,7 +371,11 @@ def _src_pixabay_video(query: str) -> list[dict]:
                 break
         if not pick:
             continue
+        shared = _clip_matches(query, h.get("tags", ""))
+        if not _clip_ok(query, shared):
+            continue
         out.append({
+            "match": sorted(shared),
             "url": pick["url"],
             "credit": {
                 "title": h.get("tags", query),
@@ -326,7 +388,59 @@ def _src_pixabay_video(query: str) -> list[dict]:
     return out
 
 
+def _src_coverr_video(query: str) -> list[dict]:
+    """Coverr footage. Richest metadata of the three, so asked first.
+
+    title + description + tags all feed the relevance gate, which is
+    the difference between knowing a clip matches and hoping it does.
+    """
+    if not config.COVERR_API_KEY:
+        return []
+    url = ("https://api.coverr.co/videos?"
+           + urllib.parse.urlencode({
+               "query": query, "page_size": 12,
+               "sort": "popular", "urls": "true"}))
+    try:
+        data = _get_json(
+            url, {"Authorization": f"Bearer {config.COVERR_API_KEY}"})
+    except Exception:
+        # Includes 429 once the demo app's 50/hour is spent. Falling
+        # through to the next source is the right answer; a thinner pool
+        # beats a failed build.
+        return []
+
+    out = []
+    for h in data.get("hits", []):
+        link = (h.get("urls") or {}).get("mp4")
+        if not link:
+            continue
+        if (h.get("max_height") or 0) < config.STOCK_VIDEO_MIN_PX:
+            continue
+        shared = _clip_matches(query, h.get("title", ""),
+                               h.get("description", ""),
+                               " ".join(h.get("tags") or []))
+        if not _clip_ok(query, shared):
+            continue
+        out.append({
+            "match": sorted(shared),
+            # Portrait footage crops to 9:16 with far less loss, so
+            # offer it ahead of landscape rather than discarding either.
+            "_vert": bool(h.get("is_vertical")),
+            "url": link,
+            "credit": {
+                "title": (h.get("title") or query)[:60],
+                "creator": "Coverr",
+                "licence": "Coverr Licence",
+                "source": f"https://coverr.co/videos/{h.get('id', '')}",
+                "via": "Coverr",
+            },
+        })
+    out.sort(key=lambda c: not c.get("_vert"))
+    return out
+
+
 VIDEO_SOURCES = [
+    ("coverr-v", _src_coverr_video),      # best metadata, judged first
     ("pexels-v", _src_pexels_video),
     ("pixabay-v", _src_pixabay_video),
 ]
@@ -425,8 +539,9 @@ def resolve_shot(shot: Shot, workdir: Path, index: int,
                 shot.path = dest
                 shot.credit = cand["credit"]
                 shot.is_video = True
+                why = ",".join(cand.get("match") or []) or "?"
                 print(f"    shot {index:2d}  {cand.get('via_source','video'):10s} "
-                      f"[clip] {shot.query[:28]}")
+                      f"[clip] {shot.query[:26]}  <-{why[:24]}")
                 return True
 
     for cand in candidates_for(shot.query):

@@ -107,6 +107,10 @@ jobs:
           GROQ_MODELS: ${{ vars.GROQ_MODELS || 'openai/gpt-oss-120b,llama-3.3-70b-versatile,llama-3.1-8b-instant' }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+          COVERR_API_KEY: ${{ secrets.COVERR_API_KEY }}
+          # 0 disables the relevance gate on stock clips.
+          CLIP_MATCH_MIN: ${{ vars.CLIP_MATCH_MIN || '1' }}
+          STOCK_VIDEO: ${{ vars.STOCK_VIDEO || '1' }}
           TTS_VOICE: ${{ vars.TTS_VOICE || 'en-US-AndrewMultilingualNeural' }}
           TTS_PROVIDERS: ${{ vars.TTS_PROVIDERS || 'gemini,azure,edge,gtts,espeak' }}
           # Reel length, so it can be tuned with a repo variable instead of a
