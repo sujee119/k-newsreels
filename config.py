@@ -149,6 +149,11 @@ STOCK_VIDEO_MIN_PX = int(os.getenv("STOCK_VIDEO_MIN_PX") or 540)
 # screwdriver gets social-media scrolling and a horse's eye -- which is
 # exactly what happened on 28 Oct. 0 disables the gate.
 CLIP_MATCH_MIN = int(os.getenv("CLIP_MATCH_MIN") or 1)
+# How many broad, subject-anchored search terms to ask the model for,
+# MoneyPrinterTurbo style, instead of one narrow query per shot. Their
+# default is 5; capped against the shot count at the call site. 0
+# disables the pool and restores per-shot queries.
+MPT_TERMS = int(os.getenv("MPT_TERMS") or 6)
 
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
 PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY", "")

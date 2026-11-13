@@ -1113,6 +1113,92 @@ def _trim_to_ceiling(narration: str, shots: list,
     return out, (kept_shots or shots)
 
 
+def video_terms(subject: str, narration: str, amount: int = 6) -> list[str]:
+    """Broad, subject-anchored stock-video search terms, in script order.
+
+    The prompt below is MoneyPrinterTurbo's generate_terms prompt, used
+    verbatim under its MIT licence (Copyright (c) 2024 Harry,
+    github.com/harry0703/MoneyPrinterTurbo). It is quoted rather than
+    paraphrased because its exact constraints are the thing that works:
+    1-3 words, English only, and "always add the main subject of the
+    video" -- which is what stops a term wandering off the topic and
+    returning a horse's eye for a story about a screwdriver.
+
+    match_script_order is their chronological mode, so term N describes
+    an earlier moment than term N+1 and the pool can be assigned to
+    shots in order.
+    """
+    amount = max(1, int(amount or 1))
+    example = json.dumps(
+        ["opening visual topic"]
+        + [f"script visual topic {i}" for i in range(2, max(amount, 1))]
+        + ["final visual topic"])
+    prompt = f"""
+# Role: Video Search Terms Generator
+
+## Goals:
+Generate {amount} chronological stock-video search terms that follow the order of topics in the video script.
+
+## Constrains:
+1. the search terms are to be returned as a json-array of strings.
+2. each search term should consist of 1-3 words, always add the main subject of the video.
+3. you must only return the json-array of strings. you must not return anything else. you must not return the script.
+4. the search terms must be related to the subject of the video.
+5. reply with english search terms only.
+6. keep the terms in the same order as the script narration; earlier terms must describe earlier visual moments.
+
+## Output Example:
+{example}
+
+## Context:
+### Video Subject
+{subject}
+
+### Video Script
+{narration}
+
+Please note that you must use English for generating video search terms; Chinese is not accepted.
+""".strip()
+
+    try:
+        raw = call("You generate stock-video search terms.", prompt)
+    except Exception as exc:
+        print(f"  ! video terms unavailable ({type(exc).__name__}) -- "
+              f"falling back to per-shot queries")
+        return []
+
+    # The chain is told json_object, so a bare array may arrive wrapped.
+    terms = None
+    try:
+        obj = json.loads(raw)
+        if isinstance(obj, list):
+            terms = obj
+        elif isinstance(obj, dict):
+            for v in obj.values():
+                if isinstance(v, list):
+                    terms = v
+                    break
+    except json.JSONDecodeError:
+        m = re.search(r"\[.*?\]", raw, re.S)
+        if m:
+            try:
+                terms = json.loads(m.group(0))
+            except json.JSONDecodeError:
+                terms = None
+    if not isinstance(terms, list):
+        print("  ! video terms were not a json array -- per-shot queries")
+        return []
+
+    out, seen = [], set()
+    for t in terms:
+        t = " ".join(str(t).split())[:60]
+        if t and t.lower() not in seen:
+            seen.add(t.lower())
+            out.append(t)
+    print(f"  video terms: {', '.join(out[:amount]) or '(none)'}")
+    return out[:amount]
+
+
 def build_caption(script: Script, title: str, link: str,
                   topic: str = "", cfg: dict | None = None,
                   credits: str = "") -> str:

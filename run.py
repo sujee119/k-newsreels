@@ -202,6 +202,17 @@ def _build_one(args) -> int:
     print(f"  {before} beats -> {len(shots)} shots "
           f"(~{avg:.1f}s each)")
 
+    # MoneyPrinterTurbo's approach: ask the model for a handful of
+    # broad, subject-anchored terms covering the whole script, fetch
+    # every term's clips into one pool, then let the shots draw on it.
+    # Per-shot queries asked the video library eleven narrow questions
+    # it could not answer.
+    if getattr(config, "MPT_TERMS", 0):
+        terms = script_mod.video_terms(
+            story.title, narration,
+            amount=max(1, min(config.MPT_TERMS, len(shots))))
+        visuals.prime_clip_pool(terms)
+
     used: set[str] = set()
     found = sum(visuals.resolve_shot(s, work, i, used)
                 for i, s in enumerate(shots))

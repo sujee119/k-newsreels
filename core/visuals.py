@@ -523,12 +523,67 @@ def candidates_for(query: str) -> list[dict]:
     return found
 
 
+_CLIP_POOL: list[dict] = []
+
+
+def prime_clip_pool(terms: list[str]) -> int:
+    """Fetch clips for every term up front, then let shots draw on them.
+
+    MoneyPrinterTurbo's model: candidates for all keywords first, then
+    select. Asking the library one broad question per video beats asking
+    it a narrow one per shot, because a small video index can answer
+    "power tools" and cannot answer "damaged screw head".
+
+    Terms arrive in narration order, so the pool is in rough script
+    order and shots can take from the front.
+    """
+    _CLIP_POOL.clear()
+    if not terms:
+        return 0
+    seen = set()
+    for term in terms:
+        for name, fn in VIDEO_SOURCES:
+            try:
+                cands = fn(term)
+            except Exception:
+                continue
+            for cand in cands:
+                if cand["url"] in seen:
+                    continue
+                seen.add(cand["url"])
+                cand["via_source"] = name
+                cand["term"] = term
+                _CLIP_POOL.append(cand)
+    print(f"  clip pool: {len(_CLIP_POOL)} clip(s) from "
+          f"{len(terms)} term(s)")
+    return len(_CLIP_POOL)
+
+
 def resolve_shot(shot: Shot, workdir: Path, index: int,
                  used: set[str]) -> bool:
     """Download footage, or failing that an image, for one shot."""
     # Footage first. Anything the video libraries cannot cover falls
     # straight through to the photo pipeline below, so a thin result is
     # today's behaviour rather than a failure.
+    # The pool first: built from the whole script's terms, so a clip
+    # here was chosen for the video rather than scraped for this shot.
+    if config.STOCK_VIDEO and _CLIP_POOL:
+        for cand in list(_CLIP_POOL):
+            if cand["url"] in used:
+                _CLIP_POOL.remove(cand)
+                continue
+            dest = workdir / f"shot{index:02d}.mp4"
+            if _download_video(cand["url"], dest):
+                used.add(cand["url"])
+                _CLIP_POOL.remove(cand)
+                shot.path = dest
+                shot.credit = cand["credit"]
+                shot.is_video = True
+                print(f"    shot {index:2d}  {cand.get('via_source','pool'):10s} "
+                      f"[pool] {cand.get('term','')[:26]}")
+                return True
+            _CLIP_POOL.remove(cand)
+
     if config.STOCK_VIDEO:
         for cand in video_candidates_for(shot.query):
             if cand["url"] in used:

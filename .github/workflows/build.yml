@@ -78,21 +78,34 @@ jobs:
       - name: Decide whether this run is needed
         id: gate
         run: |
-          SCHED="${{ github.event.schedule }}"
-          case "$SCHED" in
-            "17  1 * * *"|"17 1 * * *"|"17 13 * * *")
-              AGE=$(python -u run.py hours-since-build)
-              echo "last reel was ${AGE}h ago"
-              if python -c "import sys; sys.exit(0 if float('$AGE') >= 7 else 1)"; then
-                echo "catch-up: nothing recent, building"
-                echo "go=yes" >> "$GITHUB_OUTPUT"
-              else
-                echo "catch-up: a build landed ${AGE}h ago, standing down"
-                echo "go=no" >> "$GITHUB_OUTPUT"
-              fi ;;
-            *)
-              echo "go=yes" >> "$GITHUB_OUTPUT" ;;
-          esac
+          # ONE REEL A DAY, five chances to get it.
+          #
+          # Every cron slot is an attempt, not a build. The first slot
+          # that finds the last reel older than the cap builds; the rest
+          # stand down. A slot that finds no story writes no manifest,
+          # so the gap keeps growing and the next slot tries again --
+          # which is why the cap is measured from the last REEL and not
+          # from the clock. Cutting the crons to one instead would make
+          # a storyless slot cost the whole day.
+          #
+          # 20h, not 24h, so the daily slot does not drift later each
+          # day. Tune without touching code:
+          #   gh variable set MIN_HOURS_BETWEEN --body 20
+          MIN_H="${{ vars.MIN_HOURS_BETWEEN || '20' }}"
+          if [ -z "${{ github.event.schedule }}" ]; then
+            echo "manual run -- building regardless of the daily cap"
+            echo "go=yes" >> "$GITHUB_OUTPUT"
+          else
+            AGE=$(python -u run.py hours-since-build)
+            echo "last reel was ${AGE}h ago, cap is ${MIN_H}h"
+            if python -c "import sys; sys.exit(0 if float('$AGE') >= float('$MIN_H') else 1)"; then
+              echo "past the cap -- building"
+              echo "go=yes" >> "$GITHUB_OUTPUT"
+            else
+              echo "already have one inside the cap -- standing down"
+              echo "go=no" >> "$GITHUB_OUTPUT"
+            fi
+          fi
 
       - name: Build the reel
         if: steps.gate.outputs.go == 'yes'
@@ -110,6 +123,8 @@ jobs:
           COVERR_API_KEY: ${{ secrets.COVERR_API_KEY }}
           # 0 disables the relevance gate on stock clips.
           CLIP_MATCH_MIN: ${{ vars.CLIP_MATCH_MIN || '1' }}
+          # 0 restores per-shot queries.
+          MPT_TERMS: ${{ vars.MPT_TERMS || '6' }}
           STOCK_VIDEO: ${{ vars.STOCK_VIDEO || '1' }}
           TTS_VOICE: ${{ vars.TTS_VOICE || 'en-US-AndrewMultilingualNeural' }}
           TTS_PROVIDERS: ${{ vars.TTS_PROVIDERS || 'gemini,azure,edge,gtts,espeak' }}
