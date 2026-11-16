@@ -184,13 +184,32 @@ BUTTON (82-85s)
    If the source does not say how something was done, do not guess -- leave
    it out and spend the words on what the source does say.
 
-8. LENGTH: target {target_words} words. Hard ceiling {max_words}. This is a
-   TIGHT format. Every sentence must carry information the one before it did
-   not. There is no room for scene-setting, restatement or a warm-up line --
-   the first sentence is already the hook. If a sentence does not teach
-   something or move the story, cut it rather than shorten it. Pick the one
-   most interesting thing the study found and spend the words there; a
-   shallow tour of four findings is worse than one explained properly.
+8. LENGTH: target {target_words} words. Hard ceiling {max_words}. Every
+   sentence must carry information the one before it did not. No
+   scene-setting, no restatement, no warm-up line -- the first sentence is
+   already the hook. If a sentence does not teach something or move the
+   story, cut it rather than shorten it.
+
+   This length exists so you can EXPLAIN. It is NOT room for more
+   findings: a shallow tour of four results is worse than one taken
+   apart properly. Pick the single most interesting thing the source
+   reports and spend the words on these, in this order:
+
+   - THE MECHANISM, in plain words. Not that it works -- HOW: the steps,
+     what acts on what, in what order. "The protein clamps the gene
+     shut, so the cell never reads it" earns its seconds. "A regulatory
+     mechanism was identified" does not.
+   - ONE NUMBER THAT MATTERS, with its unit and something to compare it
+     against. "Forty times faster than the standard assay" says more
+     than "significantly faster".
+   - WHY IT WAS SURPRISING: what the field expected instead, and what
+     this replaces. A result is only interesting against a prior belief.
+   - WHAT IT DOES NOT SHOW. One honest limit, where the source states
+     one, is worth more than another adjective.
+
+   Every claim still traces to the source material. If the source does
+   not say how something was done, do NOT invent a mechanism to fill the
+   time -- explain what it does say, in more depth.
 
 9. No call to action. No "follow for more". End on meaning.
 
@@ -976,7 +995,12 @@ def generate(title: str, summary: str, article: str = "",
             if words > max_words:
                 problems.append(
                     f"Too long at {words} words. Cut to under {target_words}.")
-            elif words < target_words * 0.65:
+            # 0.90, not 0.65: at TARGET_SECONDS=50 the old floor
+            # accepted 97 words -- about 32s -- which made a 45s
+            # minimum unenforceable from variables alone. 0.90 x 150
+            # = 135 words = 45s at 3.0 words/sec, and matches the
+            # floor the shorts repo has always used.
+            elif words < target_words * 0.90:
                 problems.append(
                     f"Too short at {words} words. This needs to fill "
                     f"{config.TARGET_SECONDS} seconds -- aim for {target_words}.")
