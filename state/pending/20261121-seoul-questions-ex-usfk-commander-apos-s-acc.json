@@ -9,10 +9,12 @@
   "tts_engine": "edge",
   "cover_text": "US GENERAL CLASHES WITH SEOUL",
   "built_at": "2026-11-21T11:23:34.350417+00:00",
-  "status": "pending",
+  "status": "published",
   "tier": "safe",
   "video_url": "https://github.com/sujee119/k-newsreels/releases/download/reel-20261121-seoul-questions-ex-usfk-commander-apos-s-acc/reel.mp4",
   "last_error": "processing failed: Error: Media upload has failed with error code 2207077",
   "last_attempt_at": "2026-11-21T11:33:48.433314+00:00",
-  "attempts": 1
+  "attempts": 1,
+  "media_id": "18121739966093792",
+  "published_at": "2026-11-21T16:30:17.667837+00:00"
 }
