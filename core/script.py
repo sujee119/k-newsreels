@@ -213,6 +213,25 @@ BUTTON (82-85s)
 
 9. No call to action. No "follow for more". End on meaning.
 
+10. THE SOURCE MAY BE KOREAN. Some articles arrive in Korean. Narrate in
+    English regardless -- the audience is English-speaking. Translate the
+    meaning, do not transliterate: render 의혹 as "allegations", 압수수색 as
+    "a police raid", 갑질 as "abuse of position by a superior", 재벌 as
+    "family-controlled conglomerate". Give a person's name in standard
+    romanisation with the family name first (Kim Min-jun), an organisation
+    by its usual English name if it has one (Hankyoreh, Samsung, the
+    National Assembly), and a place as it appears on an English map
+    (Gangnam, Busan, Jeju). Translating also satisfies rule 1 by itself:
+    a translation cannot copy three consecutive words of the original.
+
+11. SCANDAL IS A STORY, NOT A VERDICT. Say who alleges what, and who denies
+    it. "Prosecutors say" and "the company denies" are not hedging, they
+    are the facts. An allegation is not a finding; an indictment is not a
+    conviction; a raid is not proof. Never name or identify a private
+    individual who is not a public figure, and never describe a minor.
+    If the story only works by implying something the source does not
+    state, drop the story -- say so instead of writing it.
+
 == THE SHOT LIST ==
 
 You also decide what the viewer SEES. Supply {shots_min}-{shots_max} shots covering the

@@ -45,6 +45,65 @@ _LAST_FETCH_NOTE = ""
 # A story needs this much recoverable text or the script will be padding.
 MIN_SOURCE_WORDS = 120
 
+
+# Korean-language sources need their own floor. MIN_SOURCE_WORDS counts
+# whitespace tokens, and Korean attaches particles to the noun -- 학교에서 is
+# one token where English has "at the school", three. An equivalent article
+# runs around 60% of the English count, so 120 rejected good Korean copy.
+MIN_SOURCE_WORDS_KO = 70
+
+# Hangul syllables, Jamo, and the compatibility block.
+_HANGUL = re.compile(r"[\uac00-\ud7a3\u1100-\u11ff\u3130-\u318f]")
+
+
+# Wire services reissue one story under several URLs: "(URGENT) Seoul shares
+# plunge", then "(LEAD) Seoul shares plunge", then "(2nd LD) Seoul shares
+# plunge". uid is sha1(link), so dedup never saw them as the same story and
+# seven copies of one headline crowded out everything else. Normalising the
+# title collapses them.
+_WIRE_PREFIX = re.compile(
+    r"^\s*(?:\((?:URGENT|LEAD|\d+(?:st|nd|rd|th)\s+LD|Yonhap[^)]*)\)"
+    r"|\[(?:속보|단독|종합|르포|인터뷰|기고|사설)\])\s*", re.I)
+_TITLE_NOISE = re.compile(r"[^0-9a-z\uac00-\ud7a3]+")
+
+
+def _title_key(title: str) -> str:
+    """A stable key for 'the same story', whatever the wire tag."""
+    t = title or ""
+    for _ in range(4):                     # "(LEAD) (2nd LD) ..." stacks
+        t2 = _WIRE_PREFIX.sub("", t)
+        if t2 == t:
+            break
+        t = t2
+    t = _TITLE_NOISE.sub(" ", t.lower()).strip()
+    return " ".join(t.split()[:12])        # a later update appends, so compare heads
+
+
+def _has_hangul(s: str) -> bool:
+    return bool(_HANGUL.search(s or ""))
+
+
+def _enough_text(text: str) -> tuple[bool, int]:
+    """(long enough, word count), with a lower bar for Korean."""
+    words = len((text or "").split())
+    floor = MIN_SOURCE_WORDS_KO if _has_hangul(text[:4000]) else MIN_SOURCE_WORDS
+    return words >= floor, words
+
+
+def _term_matches(term: str, haystack: str) -> bool:
+    r"""Keyword match that works in both languages.
+
+    English keeps \b anchors: without them "chip" matches "chipotle". Korean
+    cannot use them. In Python \w is Unicode-aware and Hangul counts as a
+    word character, so \b의혹\b fails against 의혹에 -- the particle is
+    attached, there is no boundary. Since 의혹 inside 의혹이/의혹에/의혹을 is
+    the same word and Korean has no English-style prefix ambiguity, a
+    Hangul term matches as a plain substring.
+    """
+    if _has_hangul(term):
+        return term in haystack
+    return bool(re.search(rf"\b{re.escape(term)}\b", haystack))
+
 TIER_ORDER = {"safe": 0, "caution": 1, "sensitive": 2}
 
 # Minimum age before a story is eligible, in hours, per tier.
@@ -91,7 +150,9 @@ def load_keywords() -> dict:
 
 
 def save_keywords(data: dict) -> None:
-    KEYWORDS_PATH.write_text(json.dumps(data, indent=2))
+    KEYWORDS_PATH.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8")
 
 
 def active_topics(cfg: dict) -> dict:
@@ -143,7 +204,8 @@ def _parse_rss(xml_bytes: bytes, feed_url: str, topic: str,
 
 
 def google_news(query: str, topic: str, tier: str,
-                limit: int = 12, context: str = "", days: int = 7) -> list[Story]:
+                limit: int = 12, context: str = "", days: int = 7,
+                locale: str = "") -> list[Story]:
     """Keyword search across every publisher Google News indexes.
 
     `context` narrows a generic word to its field -- bare "breakthrough"
@@ -153,9 +215,14 @@ def google_news(query: str, topic: str, tier: str,
     q = f"{query} {context}".strip()
     if days:
         q += f" when:{days}d"
+    # A Korean query against the English edition returns almost nothing,
+    # so a topic reading Korean sources sets "search_locale": "ko".
+    if locale == "ko":
+        loc = {"hl": "ko", "gl": "KR", "ceid": "KR:ko"}
+    else:
+        loc = {"hl": "en-US", "gl": "US", "ceid": "US:en"}
     url = ("https://news.google.com/rss/search?"
-           + urllib.parse.urlencode({
-               "q": q, "hl": "en-US", "gl": "US", "ceid": "US:en"}))
+           + urllib.parse.urlencode({"q": q, **loc}))
     try:
         stories = _parse_rss(_fetch(url, timeout=15, attempts=2), f"google:{query}", topic, tier)
     except Exception as exc:
@@ -190,6 +257,10 @@ def _blocked_pattern(term: str) -> str:
     otherwise the filter looks like it works while letting the headline
     straight through, which is worse than no filter.
     """
+    if _has_hangul(term):
+        # No \b (see _term_matches) and no English suffix stemming: Korean
+        # inflects by attaching particles, which the substring already covers.
+        return re.escape(term.strip())
     parts = []
     for word in term.lower().split():
         stem = word
@@ -204,7 +275,8 @@ def _blocked_pattern(term: str) -> str:
 def score_story(story: Story, keywords: list[str], blocked: list[str],
                 allowed_domains: list[str] | None = None,
                 blocked_domains: list[str] | None = None,
-                boost_phrases: list[str] | None = None) -> float:
+                boost_phrases: list[str] | None = None,
+                require_any: list[str] | None = None) -> float:
     """Keyword relevance plus a recency bonus. Negative means reject.
 
     Publisher filtering matters more than keyword tuning here. A keyword
@@ -228,6 +300,18 @@ def score_story(story: Story, keywords: list[str], blocked: list[str],
         if re.search(_blocked_pattern(term), hay):
             return -1.0
 
+    # A topic can demand that a story contain at least one term from
+    # require_any, over and above matching a keyword. Without it every
+    # keyword in a topic names a SUBJECT, and a subject word describes a
+    # policy forum as well as it describes wage theft: kforeign ranked
+    # "연합뉴스 다문화포럼 개막" -- a press release about the agency's own
+    # event -- eighth, because 다문화 matched and nothing else had to.
+    # Adding more subject words makes that worse. This makes the topic
+    # quiet instead, which is the right failure.
+    if require_any:
+        if not any(_term_matches(r.lower(), hay) for r in require_any):
+            return 0.0
+
     title_low = story.title.lower()
     hits = []
     for k in keywords:
@@ -235,7 +319,7 @@ def score_story(story: Story, keywords: list[str], blocked: list[str],
         # A one-word keyword matching only the blurb is usually incidental
         # ("chip" in a sportswriter's name). Require it in the title.
         where = title_low if len(kl.split()) == 1 else hay
-        if re.search(rf"\b{re.escape(kl)}\b", where):
+        if _term_matches(kl, where):
             hits.append(k)
     story.matched = hits
     if not hits:
@@ -244,7 +328,7 @@ def score_story(story: Story, keywords: list[str], blocked: list[str],
     score = len(hits) * 2.0
     # Title matches count double -- that's what the story is actually about.
     score += sum(1.5 for k in hits
-                 if re.search(rf"\b{re.escape(k.lower())}", story.title.lower()))
+                 if _term_matches(k.lower(), story.title.lower()))
 
     # Viral shape, not viral subject. A reversal or a superlative travels
     # regardless of field, and these are safe to chase in a way that
@@ -294,13 +378,22 @@ def gather(cfg: dict | None = None, use_search: bool = True) -> list[Story]:
 
         if use_search:
             context = spec.get("search_context", "")
+            locale = spec.get("search_locale", "")
             for kw in kws[:6]:        # keep the request count sane
-                found += google_news(kw, topic, tier, context=context)
+                found += google_news(kw, topic, tier, context=context,
+                                     locale=locale)
 
     scored: list[Story] = []
     by_uid: dict[str, Story] = {}
+    by_title: dict[str, Story] = {}
     for s in found:
         if s.uid in seen or s.uid in by_uid:
+            continue
+        # Same event, different publisher: the link is new but the story is
+        # not. Conservative on purpose -- the key is the first twelve
+        # content words, so a genuine follow-up with a different headline
+        # still gets through.
+        if "t:" + _title_key(s.title) in seen:
             continue
         spec = cfg["topics"].get(s.topic, {})
         s.score = score_story(
@@ -308,10 +401,26 @@ def gather(cfg: dict | None = None, use_search: bool = True) -> list[Story]:
             allowed_domains=(spec.get("allowed_domains")
                              or cfg.get("allowed_domains", [])),
             blocked_domains=cfg.get("blocked_domains", []),
-            boost_phrases=cfg.get("boost_phrases", []))
+            boost_phrases=cfg.get("boost_phrases", []),
+            require_any=spec.get("require_any", []))
         if s.score <= 0:
             continue
+        # Topic weight. Two keywords matching puts a share-price headline
+        # above a corruption indictment on raw density; this is the dial
+        # that fixes it without touching score_story. Set every weight to 1
+        # in keywords.json to switch it off.
+        s.score *= float(spec.get("weight", 1.0))
         by_uid[s.uid] = s
+
+        # Collapse wire reissues of one story, keeping the best-scoring and,
+        # on a tie, the longest title -- a later update carries more detail.
+        key = _title_key(s.title)
+        prev = by_title.get(key)
+        if prev is not None:
+            if (s.score, len(s.title)) <= (prev.score, len(prev.title)):
+                continue
+            scored.remove(prev)
+        by_title[key] = s
         scored.append(s)
 
     scored.sort(key=lambda x: x.score, reverse=True)
@@ -352,8 +461,8 @@ def pick_story(cfg: dict | None = None, max_tier: str = "sensitive",
             continue
 
         article = fetch_article(story.link)
-        words = len((article or "").split())
-        if words < MIN_SOURCE_WORDS:
+        long_enough, words = _enough_text(article or "")
+        if not long_enough:
             why = _LAST_FETCH_NOTE or f"only {words}w of text"
             _note(why)
             print(f"    skip ({why}): {story.title[:54]}")

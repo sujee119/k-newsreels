@@ -334,7 +334,8 @@ def _publish(slug: str) -> int:
     man.update(status="published", media_id=media_id,
                published_at=datetime.now(timezone.utc).isoformat())
     _save(slug, man)
-    feed.mark_seen(man["story_uid"])
+    feed.mark_seen(man["story_uid"],
+                           sources._title_key(man.get("title", "")))
     print(f"  published {media_id}")
     return 0
 
@@ -351,7 +352,8 @@ def cmd_reject(args) -> int:
         print(f"no such reel: {args.slug}")
         return 1
     man = _load(args.slug)
-    feed.mark_seen(man["story_uid"])
+    feed.mark_seen(man["story_uid"],
+                           sources._title_key(man.get("title", "")))
     man["status"] = "rejected"
     _save(args.slug, man)
     print(f"rejected {args.slug}")
@@ -569,7 +571,8 @@ def cmd_reconcile(args) -> int:
         if existing:
             man.update(status="published", media_id=existing)
             _save(man["slug"], man)
-            feed.mark_seen(man["story_uid"])
+            feed.mark_seen(man["story_uid"],
+                           sources._title_key(man.get("title", "")))
             print(f"  live as {existing}, marked published: {man['slug']}")
             fixed += 1
         else:
@@ -812,6 +815,36 @@ def cmd_keywords(args) -> int:
         print(f"enabled: {', '.join(enabled) or '(none)'}")
         return 0
 
+    if args.action in ("block", "unblock"):
+        if not args.words:
+            print("need one or more terms, e.g. "
+                  "python run.py keywords block 리트 만점")
+            return 1
+        blocked = cfg.setdefault("blocked_terms", [])
+        for w in args.words:
+            if args.action == "block" and w not in blocked:
+                blocked.append(w)
+                print(f"  blocked: {w}")
+            elif args.action == "unblock" and w in blocked:
+                blocked.remove(w)
+                print(f"  unblocked: {w}")
+            else:
+                print(f"  (no change: {w})")
+        sources.save_keywords(cfg)
+        print(f"\n  {len(blocked)} terms blocked. "
+              f"Run 'keywords preview' to see the effect.")
+        return 0
+
+    if args.action == "blocked":
+        blocked = cfg.get("blocked_terms", [])
+        ko = [t for t in blocked
+              if any("\uac00" <= c <= "\ud7a3" for c in t)]
+        en = [t for t in blocked if t not in ko]
+        print(f"\n  {len(en)} English:\n    " + ", ".join(sorted(en)))
+        print(f"\n  {len(ko)} Korean:\n    " + ", ".join(ko))
+        print("\n  python run.py keywords unblock <term>   to drop one")
+        return 0
+
     if args.action == "check-feeds":
         # I have shipped dead feed URLs more than once by guessing. This
         # tests every one and offers to prune the failures, so the list
@@ -930,7 +963,8 @@ def cmd_autopublish(args) -> int:
                   f"again: {man['slug']}")
             man.update(status="published", media_id=existing)
             _save(man["slug"], man)
-            feed.mark_seen(man["story_uid"])
+            feed.mark_seen(man["story_uid"],
+                           sources._title_key(man.get("title", "")))
             continue
 
         print(f"  auto-publishing {man['slug']} ({age_min:.0f} min old)")
@@ -1070,7 +1104,8 @@ def main() -> int:
     k = sub.add_parser("keywords")
     k.add_argument("action",
                    choices=["list", "add", "remove", "enable", "disable",
-                            "preview", "check-feeds"])
+                            "preview", "check-feeds", "block", "unblock",
+                            "blocked"])
     k.add_argument("words", nargs="*")
     k.add_argument("--topic")
     k.add_argument("--no-search", action="store_true")

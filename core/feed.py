@@ -67,9 +67,20 @@ def _load_seen() -> set[str]:
         return set()
 
 
-def mark_seen(uid: str) -> None:
+def mark_seen(uid: str, title_key: str = "") -> None:
+    """Remember a published story by link AND by normalised title.
+
+    uid is sha1(link), so three publishers covering one resignation are
+    three unrelated stories to the pipeline and the second one builds a
+    duplicate reel the next day. Storing the title key under a "t:" prefix
+    in the same set lets gather() recognise the event rather than the URL.
+    The prefix keeps the two namespaces apart in one file, so nothing else
+    that reads this set has to change.
+    """
     seen = _load_seen()
     seen.add(uid)
+    if title_key:
+        seen.add("t:" + title_key)
     # Keep the file from growing forever.
     SEEN_PATH.write_text(json.dumps(sorted(seen)[-2000:], indent=0))
 

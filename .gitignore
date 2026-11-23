@@ -6,3 +6,5 @@ __pycache__/
 reels-fix.tar.gz
 *.tar.gz
 *:Zone.Identifier
+*.bak
+*.bak[0-9]

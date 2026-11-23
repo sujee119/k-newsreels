@@ -163,9 +163,15 @@ jobs:
           # and the whole log lands at the end with one timestamp, which
           # makes a failed run almost impossible to read.
           if [ -n "${{ inputs.story_url }}" ]; then
-            python -u run.py build --story "${{ inputs.story_url }}"
+            python -u run.py build --story "${{ inputs.story_url }}" \
+              --max-tier "${{ vars.MAX_TIER || 'caution' }}"
           else
-            python -u run.py build --count "${{ inputs.count || vars.REELS_PER_RUN || 1 }}"
+            # Without --max-tier, argparse defaults to "safe" and every
+            # caution-tier story is rejected at pick time. Set MAX_TIER=safe
+            # as a repo variable to switch the scandal topics off in one move.
+            python -u run.py build \
+              --count "${{ inputs.count || vars.REELS_PER_RUN || 1 }}" \
+              --max-tier "${{ vars.MAX_TIER || 'caution' }}"
           fi
 
       - name: Publish videos and send for approval
